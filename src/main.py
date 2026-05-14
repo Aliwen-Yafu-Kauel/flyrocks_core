@@ -12,6 +12,7 @@ from core.config import Config
 from core.database import Job, engine, Session, SQLModel
 # El service ahora debe estar preparado para recibir el csv_path
 from service import run_tracking_pipeline
+from core.report import generar_pdf_job 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,6 +32,38 @@ app.add_middleware(
 )
 
 # --- LÓGICA DE TAREA DE FONDO ---
+
+def background_report_task(job_id: str, csv_path: str, json_path: str, radio_equipos: float = 250.0):
+    """
+    Tarea para procesar únicamente el reporte PDF.
+    """
+    try:
+        Job.update_status(job_id, engine, status="Generando Reporte", is_running=True)
+        
+        pdf_filename = f"reporte_{job_id}.pdf"
+
+        Job.update_status(job_id, engine, status="Generando Reporte PDF...", is_running=True)
+        
+        generar_pdf_job(csv_path=csv_path, json_path=json_path, output_pdf=pdf_filename, radio_equipos=radio_equipos)
+
+        # Actualizar DB al terminar
+        Job.update_status(
+            job_id, 
+            engine, 
+            status="Reporte Finalizado", 
+            report_file_path=f"reporte_{job_id}.pdf", 
+            is_running=False  # Esto cerrará el WS en el cliente
+        )
+        
+    except Exception as e:
+        print(f"Error generando reporte: {e}")
+        Job.update_status(job_id, engine, status=f"Error Reporte: {str(e)}", is_running=False)
+    
+    finally:
+        # Limpieza de archivos de entrada
+        for p in [csv_path, json_path]:
+            if p and os.path.exists(p):
+                os.remove(p)
 
 def background_tracking_task(config: Config, job_id: str):
     """
@@ -80,7 +113,7 @@ def background_tracking_task(config: Config, job_id: str):
 async def upload_and_analyze(
     background_tasks: BackgroundTasks,
     video: UploadFile = File(...),
-    detonation_sequence: UploadFile = File(...), # Archivo CSV con pozos X,Y
+    # detonation_sequence: UploadFile = File(...), # Archivo CSV con pozos X,Y
     origin_zone: str = Form(...),
     expected_projection_zone: str = Form(...),
     h_matrix: str = Form(...)
@@ -96,21 +129,21 @@ async def upload_and_analyze(
     
     # Rutas temporales
     video_path = f"temp_vid_{job_id}_{video.filename}"
-    csv_path = f"temp_csv_{job_id}_{detonation_sequence.filename}"
+    # csv_path = f"temp_csv_{job_id}_{detonation_sequence.filename}"
 
     try:
         # 2. Guardar Video
         with open(video_path, "wb") as buffer:
             shutil.copyfileobj(video.file, buffer)
             
-        # 3. Guardar CSV de Detonación
-        with open(csv_path, "wb") as buffer:
-            shutil.copyfileobj(detonation_sequence.file, buffer)
+        # # 3. Guardar CSV de Detonación
+        # with open(csv_path, "wb") as buffer:
+        #     shutil.copyfileobj(detonation_sequence.file, buffer)
 
         # 4. Crear Config (Asegúrate de haber actualizado core/config.py con este argumento)
         config = Config(
             video_path=video_path,
-            detonation_csv_path=csv_path, 
+            # detonation_csv_path=csv_path, 
             origin_zone=json.loads(origin_zone),
             projection_zone=json.loads(expected_projection_zone),
             h_matrix=json.loads(h_matrix)
@@ -123,10 +156,58 @@ async def upload_and_analyze(
         
     except Exception as e:
         # Limpieza preventiva
-        for p in [video_path, csv_path]:
+        for p in [video_path]:
             if os.path.exists(p): os.remove(p)
         Job.update_status(job_id, engine, status=f"Error de carga: {str(e)}", is_running=False)
         raise HTTPException(status_code=500, detail=f"Error al iniciar el análisis: {str(e)}")
+    
+@app.post("/api/generate_report", status_code=status.HTTP_202_ACCEPTED)
+async def generate_report_endpoint(
+    background_tasks: BackgroundTasks,
+    csv_file: UploadFile = File(...),
+    json_data: UploadFile = File(...),
+    radio_equipos: float = Form(250.0),
+    job_id: str = Form(None)  # Puede ser un ID existente o creamos uno nuevo
+):
+    # 1. Si no viene job_id, creamos un registro nuevo en la DB
+    if not job_id:
+        new_job = Job()
+        with Session(engine) as session:
+            session.add(new_job)
+            session.commit()
+            session.refresh(new_job)
+        job_id = new_job.id
+
+    # Rutas temporales
+    csv_path = f"report_input_{job_id}_{csv_file.filename}"
+    json_path = f"report_input_{job_id}_{json_data.filename}"
+
+    try:
+        # 2. Guardar archivos recibidos
+        with open(csv_path, "wb") as buffer:
+            shutil.copyfileobj(csv_file.file, buffer)
+        
+        with open(json_path, "wb") as buffer:
+            shutil.copyfileobj(json_data.file, buffer)
+
+        # 3. Lanzar tarea pesada en segundo plano
+        background_tasks.add_task(
+            background_report_task, 
+            job_id, 
+            csv_path, 
+            json_path,
+            radio_equipos
+        )
+
+        return {
+            "job_id": job_id, 
+            "message": "Generando reporte PDF desde archivos proporcionados."
+        }
+
+    except Exception as e:
+        for p in [csv_path, json_path]:
+            if os.path.exists(p): os.remove(p)
+        raise HTTPException(status_code=500, detail=f"Error al iniciar reporte: {str(e)}")
 
 @app.get("/api/results/{job_id}")
 async def download_results(job_id: str):

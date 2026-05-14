@@ -6,8 +6,6 @@ from scipy.optimize import linear_sum_assignment
 from core.vision import VisionProcessor
 from core.tracker import RockTracker
 from core.exporter import ResultsExporter
-# Asegúrate de que este import apunte al archivo donde pegaste el código largo del PDF
-from core.report import generar_pdf_job 
 
 def run_tracking_pipeline(config, job_id: str, progress_callback=None):
     """
@@ -99,19 +97,6 @@ def run_tracking_pipeline(config, job_id: str, progress_callback=None):
     # 1. Exportar datos crudos a JSON
     exporter.export_to_json(all_paths, last_valid_frame.shape, json_out)
     
-    # 2. LLAMADA CORREGIDA AL GENERADOR DE PDF
-    # Ahora pasamos: (Ruta JSON, Ruta CSV, Ruta PDF de salida)
-    try:
-        generar_pdf_job(
-            json_path=json_out, 
-            csv_path=config.detonation_csv_path, # Proviene del Config cargado en main.py
-            output_pdf=pdf_out, 
-            radio_equipos=250.0
-        )
-    except Exception as e:
-        print(f"Error al generar el PDF: {e}")
-        # Opcionalmente puedes notificar el error aquí
-
     # 3. Finalizar proceso
     if progress_callback:
         progress_callback(total_frames, total_frames, "Completado", json_out)
