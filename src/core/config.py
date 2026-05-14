@@ -3,21 +3,21 @@ import numpy as np
 SQLITE_URL = "sqlite:///./flyrocks.db"
 
 class Config:
-    def __init__(self, video_path: str, origin_zone: list, projection_zone: list, h_matrix: list, detonation_csv_path: str):
+    def __init__(self, video_path: str, origin_zone: list, projection_zone: list, h_matrix: list): #, detonation_csv_path: str):
         self.VIDEO_PATH = video_path
         self.STAB_SCALE = 0.4  
 
         # Parámetros base
         self.MIN_FRAMES_TO_CONFIRM = 5  
         self.MIN_AREA = 15        
-        self.MAX_AREA = 500    
-        self.DIST_THRESH = 50  
-        self.MAX_MISSING = 10 
+        self.MAX_AREA = 2500    
+        self.DIST_THRESH = 350  
+        self.MAX_MISSING = 40 
         self.MIN_SOLIDITY = 0.70  
         self.EDGE_MARGIN = 5
         self.MAX_FALL_RATIO = 3.0
         
-        self.detonation_csv_path = detonation_csv_path
+        # self.detonation_csv_path = detonation_csv_path
 
         # Física
         self.MIN_DISPLACEMENT_BASE = 50  
