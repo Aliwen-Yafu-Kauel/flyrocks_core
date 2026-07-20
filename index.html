@@ -120,7 +120,7 @@
         </section>
     </div>
 
-    <script>
+   <script>
         const API_BASE_URL = 'http://localhost:8000';
         let currentJobId = null;
         let ws = null;
@@ -131,32 +131,76 @@
             
             ws = new WebSocket(wsUrl);
 
+            // Manejo de errores de red
+            ws.onerror = (error) => {
+                console.error("❌ Error de red en el WebSocket:", error);
+                const statusText = document.getElementById('status-text');
+                statusText.innerText = "❌ Conexión perdida con el servidor.";
+                statusText.classList.replace('text-blue-600', 'text-red-600');
+            };
+
+            // Detectar exactamente por qué se cierra
+            ws.onclose = (event) => {
+                console.warn(`🔌 WebSocket cerrado. Código: ${event.code}, Razón: ${event.reason || "Ninguna"}`);
+            };
+
             ws.onmessage = (event) => {
+                console.log("📥 Mensaje del backend:", event.data);
+                
                 const data = JSON.parse(event.data);
-                document.getElementById('status-text').innerText = data.status;
-                document.getElementById('progress-bar').style.width = `${data.percentage}%`;
-                document.getElementById('percentage-text').innerText = Math.round(data.percentage);
+                const statusText = document.getElementById('status-text');
+                
+                if (data.error) {
+                    statusText.innerText = `❌ Error: ${data.error}`;
+                    statusText.classList.replace('text-blue-600', 'text-red-600');
+                    document.getElementById('progress-bar').classList.replace('bg-blue-600', 'bg-red-600');
+                    ws.close();
+                    return; 
+                }
 
-                if (!data.is_running) {
-                    document.getElementById('results-actions').classList.remove('hidden');
-                    document.getElementById('btn-json').href = `${API_BASE_URL}/api/results/${jobId}`;
+                // 3. Actualizamos la interfaz normal
+                statusText.innerText = data.status || "Procesando...";
+                document.getElementById('progress-bar').style.width = `${data.percentage || 0}%`;
+                document.getElementById('percentage-text').innerText = Math.round(data.percentage || 0);
 
-                    if (data.has_report) {
-                        const finalArea = document.getElementById('download-final-pdf-area');
-                        finalArea.classList.remove('hidden');
-                        document.getElementById('btn-download-pdf-final').href = `${API_BASE_URL}/api/report/${jobId}`;
+                // --- FORZAMOS is_running A TRUE POR DEFECTO ---
+                // Solo será falso si el backend explícitamente manda un false, un "false" o un 0.
+                let isRunning = true; 
+                if (data.is_running === false || data.is_running === 0 || data.is_running === "false") {
+                    isRunning = false;
+                }
+
+                // 4. Evaluamos si el proceso terminó
+                if (!isRunning) {
+                    
+                    if (data.error_message) {
+                        statusText.innerText = `❌ Error Crítico: ${data.error_message}`;
+                        statusText.classList.replace('text-blue-600', 'text-red-600');
+                        document.getElementById('progress-bar').classList.replace('bg-blue-600', 'bg-red-600');
+                    } else {
+                        document.getElementById('results-actions').classList.remove('hidden');
+                        document.getElementById('btn-json').href = `${API_BASE_URL}/api/results/${jobId}`;
+
+                        if (data.has_report) {
+                            const finalArea = document.getElementById('download-final-pdf-area');
+                            finalArea.classList.remove('hidden');
+                            document.getElementById('btn-download-pdf-final').href = `${API_BASE_URL}/api/report/${jobId}`;
+                            
+                            const genBtn = document.getElementById('btn-generate-pdf');
+                            genBtn.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Reporte Generado';
+                            genBtn.classList.replace('bg-red-600', 'bg-green-600');
+                        }
                         
-                        const genBtn = document.getElementById('btn-generate-pdf');
-                        genBtn.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Reporte Generado';
-                        genBtn.classList.replace('bg-red-600', 'bg-green-600');
-                        
-                        document.getElementById('status-text').innerText = "✅ Proceso completo.";
-                        ws.close();
+                        statusText.innerText = "✅ Proceso completo.";
+                        statusText.classList.replace('text-blue-600', 'text-green-600');
                     }
+                    
+                    ws.close();
                 }
             };
         }
 
+        // Formulario 1: Disparar el análisis principal
         document.getElementById('analyze-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('submit-btn');
@@ -172,6 +216,8 @@
                 btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Subiendo...';
                 
                 const res = await fetch(`${API_BASE_URL}/api/analyze`, { method: 'POST', body: formData });
+                if (!res.ok) throw new Error("Error al conectar con la API");
+                
                 const data = await res.json();
                 
                 currentJobId = data.job_id;
@@ -179,6 +225,11 @@
                 document.getElementById('upload-section').classList.add('hidden');
                 document.getElementById('progress-section').classList.remove('hidden');
                 
+                // Restauramos color por si hubo un error previo
+                document.getElementById('status-text').classList.replace('text-red-600', 'text-blue-600');
+                document.getElementById('progress-bar').classList.replace('bg-red-600', 'bg-blue-600');
+                
+                // Conectamos el WebSocket
                 connectWS(currentJobId);
             } catch (err) {
                 alert('Error: ' + err.message);
@@ -187,19 +238,19 @@
             }
         });
 
+        // Botón para mostrar la sección de reporte
         document.getElementById('btn-open-report-form').onclick = () => {
             const section = document.getElementById('report-form-section');
             section.classList.remove('hidden');
             section.scrollIntoView({ behavior: 'smooth' });
         };
 
-        // Formulario 2: Generar PDF (ACTUALIZADO PARA ENVIAR radio_equipo)
+        // Formulario 2: Generar PDF
         document.getElementById('generate-report-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('btn-generate-pdf');
             const formData = new FormData();
             
-            // Captura de archivos y el nuevo parámetro numérico
             formData.append('csv_file', document.getElementById('report_csv').files[0]);
             formData.append('json_data', document.getElementById('report_json').files[0]);
             formData.append('radio_equipos', document.getElementById('radio_equipos').value);
@@ -215,7 +266,7 @@
             } catch (err) {
                 alert(err.message);
                 btn.disabled = false;
-                btn.innerHTML = 'Reintentar';
+                btn.innerHTML = '<i class="fa-solid fa-gears mr-2"></i> Reintentar Generación';
             }
         });
     </script>
