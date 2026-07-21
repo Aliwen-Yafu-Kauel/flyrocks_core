@@ -68,8 +68,7 @@ class TrajectoryCategorizationNode(PipelineNode):
         # 4. Analizar cada trayectoria
         for track_id, traj_array in trajectories.items():
             
-            # Quitamos la columna 0 (el ID) y lo pasamos a lista: Queda [X, Y, Frame]
-            puntos_lista = traj_array[:, 1:].tolist()
+            puntos_lista = traj_array[:, 1:3].astype(int).flatten().tolist()
 
             if not puntos_lista:
                 continue
