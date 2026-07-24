@@ -99,7 +99,7 @@ def run_tracking_core(frames: np.ndarray, detections_by_frame: Dict[int, np.ndar
 
     return trajectories
 
-def evaluate_trajectories(trajectories: List[Trajectory], min_frames: int = 10, min_dist: float = 0) -> Tuple[int, float, List[Trajectory]]:
+def evaluate_trajectories(trajectories: List[Trajectory], min_frames: int = 10, min_dist: float = 30) -> Tuple[int, float, List[Trajectory]]:
     """Filters and calculates metrics for raw trajectories."""
     valid = []
     distances = []
