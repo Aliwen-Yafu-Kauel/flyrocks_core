@@ -11,7 +11,8 @@ from utils.nodes.velocity_analysis import (
     TrajectoryVelocityNode, GaussianThresholdNode,
     HighVelocityFilterNode  
 )  
-from utils.nodes.visualization import VideoRendererNode 
+from utils.nodes.trajectory_smoothness import TrajectorySmoothnessNode
+from utils.nodes.image_renderer import BackgroundExtractorNode
 from utils.nodes.trajectory_categorization import TrajectoryCategorizationNode
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,8 @@ def run_pipeline_task(
         threshold_calc = GaussianThresholdNode(name="8_GaussianThreshold", sigma_multiplier=0.5)
         rock_filter = HighVelocityFilterNode(name="9_HighVelocityFilter")
         categorizer = TrajectoryCategorizationNode(name="10_TrajectoryCategorizer")
-        render = VideoRendererNode(name="11_VideoRenderer", output_filename=output_filename)
+        smooth_filter = TrajectorySmoothnessNode(name="9.5_SmoothnessFilter")
+        bg_extractor = BackgroundExtractorNode(name="11_BackgroundExtractor", output_filename=output_filename)
 
         # Mapeamos los nodos con su mensaje de estado y % de progreso esperado al finalizar
         pipeline_steps = [
@@ -59,9 +61,10 @@ def run_pipeline_task(
             (cleaner, "Limpiando trayectorias inválidas", 65),
             (velocity_calc, "Calculando cinemática", 75),
             (threshold_calc, "Calculando umbral gaussiano", 80),
-            (rock_filter, "Filtrando flyrocks", 90),
-            (categorizer, "Categorizando trayectorias", 95),
-            (render, "Renderizando video final", 98)
+            (rock_filter, "Filtrando flyrocks", 85),
+            (categorizer, "Categorizando trayectorias", 90),
+            (smooth_filter, "Calculando R2 de trayectorias", 95),
+            (bg_extractor, "Extrayendo frame de fondo", 98)
         ]
 
         # Inyectamos todos los datos que vienen del frontend

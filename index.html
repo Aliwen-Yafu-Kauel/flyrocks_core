@@ -73,6 +73,22 @@
             </div>
         </section>
 
+        <!-- Interfaz Interactiva de Trayectorias -->
+        <section id="interactive-results" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-8 mb-8 fade-in">
+            <h3 class="text-xl font-bold mb-4 text-slate-800">Filtrado Interactivo por R²</h3>
+            
+            <div class="mb-6">
+                <label class="font-semibold text-slate-600">Umbral R²: <span id="r2-value-display" class="text-blue-600">0.80</span></label>
+                <input type="range" id="r2-slider" min="0.0" max="1.0" step="0.001" value="0.80" class="w-full mt-2 accent-blue-600">
+            </div>
+
+            <!-- Contenedor relativo para montar el Canvas sobre la Imagen -->
+            <div style="position: relative; display: inline-block; width: 100%; border-radius: 0.5rem; overflow: hidden;">
+                <img id="bg-image" src="" alt="Fondo de voladura" style="width: 100%; display: block;">
+                <canvas id="trajectory-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></canvas>
+            </div>
+        </section>
+
         <section id="report-form-section" class="hidden bg-white rounded-2xl shadow-xl border-2 border-red-50 p-8 mb-12 fade-in">
             <div class="flex items-center mb-6">
                 <div class="bg-red-100 p-3 rounded-lg mr-4 text-red-600">
@@ -181,6 +197,9 @@
                         document.getElementById('results-actions').classList.remove('hidden');
                         document.getElementById('btn-json').href = `${API_BASE_URL}/api/results/${jobId}`;
 
+                        // ✨ AQUÍ LLAMAS A LA INTERACTIVIDAD ✨
+                        inicializarInteractividad(jobId);
+
                         if (data.has_report) {
                             const finalArea = document.getElementById('download-final-pdf-area');
                             finalArea.classList.remove('hidden');
@@ -269,6 +288,91 @@
                 btn.innerHTML = '<i class="fa-solid fa-gears mr-2"></i> Reintentar Generación';
             }
         });
+
+        // --- FUNCIONES INTERACTIVAS ---
+        let trayectoriasGlobales = [];
+        let canvas = document.getElementById('trajectory-canvas');
+        let ctx = canvas.getContext('2d');
+        let bgImage = document.getElementById('bg-image');
+        let slider = document.getElementById('r2-slider');
+        let display = document.getElementById('r2-value-display');
+
+        async function inicializarInteractividad(jobId) {
+            document.getElementById('interactive-results').classList.remove('hidden');
+            
+            // 1. Obtener la data (JSON) de la API
+            const res = await fetch(`${API_BASE_URL}/api/results/${jobId}`);
+            const data = await res.json();
+            
+            // Aquí sacamos las trayectorias de la BD
+            trayectoriasGlobales = data.json_data.trayectorias || [];
+            
+            // 2. Cargar la imagen de fondo (FastAPI ahora nos deja verla)
+            bgImage.src = `${API_BASE_URL}/temp_videos/background.jpg`;
+            
+            // 3. Ajustar el tamaño del canvas cuando la imagen cargue
+            bgImage.onload = () => {
+                canvas.width = bgImage.naturalWidth;
+                canvas.height = bgImage.naturalHeight;
+                dibujarTrayectorias();
+            };
+        }
+
+        function dibujarTrayectorias() {
+            // 1. Leemos el valor lineal puro del slider (de 0 a 1)
+            const valorLineal = parseFloat(slider.value);
+            
+            // 2. Aplicamos la curva matemática para concentrar la resolución cerca del 1
+            const umbral = 1 - Math.pow(1 - valorLineal, 3);
+            
+            // Mostramos el valor calculado con 3 decimales para apreciar la precisión
+            display.innerText = umbral.toFixed(5);
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            let contDibujadas = 0;
+
+            trayectoriasGlobales.forEach((tray, index) => {
+                const r2 = tray.r2_score !== undefined ? tray.r2_score : (tray.r2 !== undefined ? tray.r2 : 1.0);
+                
+                if (r2 >= umbral) {
+                    const rawPts = tray.puntos || tray.puntos_px || tray.points || [];
+                    
+                    if (rawPts.length > 1) {
+                        contDibujadas++;
+                        ctx.beginPath();
+                        
+                        const p0 = Array.isArray(rawPts[0]) ? { x: rawPts[0][0], y: rawPts[0][1] } : rawPts[0];
+                        ctx.moveTo(p0.x, p0.y);
+
+                        for (let i = 1; i < rawPts.length; i++) {
+                            const p = Array.isArray(rawPts[i]) ? { x: rawPts[i][0], y: rawPts[i][1] } : rawPts[i];
+                            ctx.lineTo(p.x, p.y);
+                        }
+
+                        // Colores únicos basados en el ángulo áureo
+                        ctx.strokeStyle = `hsla(${(index * 137.5) % 360}, 85%, 55%, 0.9)`;
+                        ctx.lineWidth = Math.max(3, Math.round(canvas.width / 400)); 
+                        ctx.stroke();
+
+                        // Dibujar punto final (Impacto)
+                        const pLast = Array.isArray(rawPts[rawPts.length - 1]) ? 
+                            { x: rawPts[rawPts.length - 1][0], y: rawPts[rawPts.length - 1][1] } : rawPts[rawPts.length - 1];
+
+                        ctx.beginPath();
+                        ctx.arc(pLast.x, pLast.y, Math.max(4, Math.round(canvas.width / 300)), 0, 2 * Math.PI);
+                        ctx.fillStyle = "#FFFFFF"; 
+                        ctx.fill();
+                        ctx.lineWidth = 1;
+                        ctx.strokeStyle = "#000000";
+                        ctx.stroke();
+                    }
+                }
+            });
+
+            console.log(`🎨 Dibujadas ${contDibujadas} trayectorias con R² >= ${umbral.toFixed(5)}`);
+        }
+
+        slider.addEventListener('input', dibujarTrayectorias);
     </script>
 </body>
 </html>
