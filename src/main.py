@@ -42,7 +42,10 @@ async def start_analysis(
     video: UploadFile = File(...),
     origin_zone: str = Form(...),
     expected_projection_zone: str = Form(...),
-    h_matrix: str = Form(...)
+    h_matrix: str = Form(...),
+    percentile: float = Form(..., ge=0.0, le=100.0),
+    sigma: float = Form(..., ge=0.0, le=1.0),
+    esp: float = Form(..., ge=1.0, le=7.0)
 ):
     # 1. Parsear y validar los strings JSON que vienen del form
     try:
@@ -74,7 +77,10 @@ async def start_analysis(
         origin_zone_parsed, 
         expected_zone_parsed, 
         h_matrix_parsed,
-        output_filename="background.jpg"  
+        percentile,
+        sigma,
+        esp,    
+        output_filename="voladura_analisis.mp4"  
     )
     
     return {"job_id": new_job.id, "mensaje": "Análisis encolado en segundo plano"}

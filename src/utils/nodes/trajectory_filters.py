@@ -1,170 +1,236 @@
 import numpy as np
 import logging
 from typing import Dict, Any
-from .base import PipelineNode  # Asegúrate de que esta importación coincida con tu estructura
+from .base import PipelineNode
 
 logger = logging.getLogger(__name__)
 
-class ZigzagFilterNode(PipelineNode):
-    """
-    Filtra las trayectorias evaluando su 'tortuosidad' para eliminar aquellas con 
-    comportamiento errático (zigzag). Conserva líneas rectas y curvas parabólicas.
-    """
-    def __init__(self, name: str = "ZigzagFilter", max_tortuosity: float = 1.25):
+class TortuosityCalculationNode(PipelineNode):
+    def __init__(self, name: str = "12_TortuosityCalculation"):
         super().__init__(name)
-        # 1.0 es una recta perfecta. 1.25 permite curvas de vuelo balístico. >1.5 es ruido/zigzag.
-        self.max_tortuosity = max_tortuosity
 
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        rocks_dict = context.get("filtered_rocks_dict")
+        resultados = context.get("json_resultados")
+        trajectories = context.get("filtered_rocks_dict") 
         
-        # Si no hay datos del nodo anterior, pasamos de largo
-        if not rocks_dict:
+        if not resultados or not trajectories:
+            print(f"[{self.name}] ⚠️ Faltan datos en el contexto para calcular.")
             return context
 
-        logger.info(f"[{self.name}] Evaluando linealidad (Umbral de tortuosidad <= {self.max_tortuosity})...")
-        
-        smooth_rocks = {}
-        
-        for traj_id, traj in rocks_dict.items():
-            # Si tiene muy pocos puntos, asumimos que es válida (no hay datos suficientes para zigzag)
+        # 1. Crear un mapa seguro de IDs forzando todo a string para que hagan "match"
+        traj_map = {str(k): v for k, v in trajectories.items()}
+
+        modificados = 0
+        # 2. Iteramos directamente sobre los objetos JSON que queremos modificar
+        for track_str, data in resultados.items():
+            if track_str not in traj_map:
+                data["tortuosidad"] = 1.0  # Por defecto si no se encuentra
+                continue
+                
+            traj = traj_map[track_str]
             if len(traj) < 3:
-                smooth_rocks[traj_id] = traj
+                data["tortuosidad"] = 1.0
+                modificados += 1
                 continue
             
-            # Extraer coordenadas X e Y (índices 1 y 2 de tu tensor)
-            x = traj[:, 1]
-            y = traj[:, 2]
-            
-            # 1. Desplazamiento Neto (Distancia en línea recta desde inicio a fin)
+            # Usamos el array original de numpy (extremadamente rápido)
+            x, y = traj[:, 1], traj[:, 2]
             displacement = np.hypot(x[-1] - x[0], y[-1] - y[0])
             
-            # 2. Distancia Total Recorrida (Suma de los segmentos punto a punto)
-            dx = np.diff(x)
-            dy = np.diff(y)
-            path_length = np.sum(np.hypot(dx, dy))
-            
-            # Evitar división por cero (si la trayectoria empieza y termina exactamente en el mismo pixel)
             if displacement == 0:
-                continue 
+                data["tortuosidad"] = 1.0
+            else:
+                path_length = np.sum(np.hypot(np.diff(x), np.diff(y)))
+                data["tortuosidad"] = round(float(path_length / displacement), 3)
                 
-            # 3. Cálculo de la Tortuosidad
-            tortuosity = path_length / displacement
+            modificados += 1
             
-            # 4. Filtrado
-            if tortuosity <= self.max_tortuosity:
-                smooth_rocks[traj_id] = traj
-                
-        # Logs de resultados
-        descartadas = len(rocks_dict) - len(smooth_rocks)
-        logger.info(f"[{self.name}] Eliminadas {descartadas} trayectorias en zigzag.")
-        logger.info(f"[{self.name}] Entregando {len(smooth_rocks)} trayectorias limpias al siguiente nodo.")
+        print(f"[{self.name}] ✅ Se calculó y añadió 'tortuosidad' a {modificados}/{len(resultados)} trayectorias.")
         
-        # Sobrescribimos el diccionario en el contexto para que el TrajectoryCategorizationNode lo use
-        context["filtered_rocks_dict"] = smooth_rocks
-        
+        # Sobreescribimos el contexto por seguridad
+        context["json_resultados"] = resultados
         return context
-    
-class OriginZoneFilterNode(PipelineNode):
-    def __init__(self, name: str = "OriginZoneFilter", area_expansion_pct: float = 0.05):
+
+class OriginAreaExpansionNode(PipelineNode):
+    """
+    Calcula la distancia máxima que voló una roca fuera del área de origen,
+    expresada como un factor relativo respecto al diámetro equivalente de la voladura.
+    """
+    def __init__(self, name: str = "13_OriginAreaExpansion"):
         super().__init__(name)
-        self.area_expansion_pct = area_expansion_pct
 
     def _get_convex_hull_ccw(self, points: np.ndarray) -> np.ndarray:
         pts = np.unique(points.astype(np.float32), axis=0)
-        if len(pts) < 3:
-            return pts
-            
+        if len(pts) < 3: return pts
         ind = np.lexsort((pts[:, 1], pts[:, 0]))
         pts = pts[ind]
         
-        def cross(o, a, b):
+        def cross(o, a, b): 
             return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-        
+            
         lower = []
         for p in pts:
-            while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0: 
                 lower.pop()
             lower.append(p)
             
         upper = []
         for p in reversed(pts):
-            while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0: 
                 upper.pop()
             upper.append(p)
             
         return np.array(lower[:-1] + upper[:-1], dtype=np.float32)
 
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        rocks_dict = context.get("filtered_rocks_dict")
+        resultados = context.get("json_resultados")
+        trajectories = context.get("filtered_rocks_dict")
         origin_zone = context.get("origin_zone")
         
-        if not rocks_dict:
-            return context
-          
-        if origin_zone is None or len(origin_zone[0]) < 6:
-            logger.warning(f"[{self.name}] 'origin_zone' no es válido. Saltando filtro.")
-            context["outside_origin_rocks_dict"] = rocks_dict
+        if not resultados or not trajectories:
             return context
             
-        flat_zone = np.array(origin_zone[0], dtype=np.float32)
-        zone_pts = flat_zone.reshape(-1, 2)
-        
-        hull_pts = self._get_convex_hull_ccw(zone_pts)
+        if origin_zone is None or len(origin_zone[0]) < 6:
+            for data in resultados.values(): 
+                data["escape_relativo"] = 0.0
+            return context
+            
+        # Preparación de la geometría (1 sola vez por ejecución del nodo)
+        flat_zone = np.array(origin_zone[0], dtype=np.float32).reshape(-1, 2)
+        hull_pts = self._get_convex_hull_ccw(flat_zone)
         
         if len(hull_pts) < 3:
-            context["outside_origin_rocks_dict"] = rocks_dict
+            for data in resultados.values(): 
+                data["escape_relativo"] = 0.0
             return context
 
         V = hull_pts
         V_next = np.roll(hull_pts, shift=-1, axis=0)
         
-        # 1. Área del polígono (Shoelace) y Perímetro
-        cross_products = V[:, 0] * V_next[:, 1] - V[:, 1] * V_next[:, 0]
-        area = 0.5 * np.abs(np.sum(cross_products))
+        # Área del polígono (usada para calcular el diámetro equivalente)
+        area = 0.5 * np.abs(np.sum(V[:, 0] * V_next[:, 1] - V[:, 1] * V_next[:, 0]))
         
         D = V_next - V
         distances = np.linalg.norm(D, axis=1)
-        perimeter = np.sum(distances)
         
-        # 2. Delta dinámico
-        dynamic_delta_px = (self.area_expansion_pct * area) / perimeter if perimeter > 0 else 0.0
-        
-        # 3. Normales exteriores garantizadas
         N = np.column_stack((D[:, 1], -D[:, 0]))
-        centroid = np.mean(V, axis=0)
-        to_centroid = centroid - V
+        to_centroid = np.mean(V, axis=0) - V
+        N[np.sum(N * to_centroid, axis=1) > 0] *= -1
         
-        dot_prod = np.sum(N * to_centroid, axis=1)
-        N[dot_prod > 0] *= -1
-        
-        norms = distances
-        norms[norms == 0] = 1e-6
-        N_unit = (N / norms[:, np.newaxis]).astype(np.float32) 
-        
-        # --- OPTIMIZACIONES CLAVE DE ÁLGEBRA LINEAL Y MEMORIA ---
-        
-        # A. Precalculamos (V • N) fuera del bucle. Esto es un array 1D de tamaño K (aristas).
+        distances[distances == 0] = 1e-6
+        N_unit = (N / distances[:, np.newaxis]).astype(np.float32) 
         C = np.sum(V * N_unit, axis=1) 
-        
-        # B. Transponemos la normal una sola vez para la multiplicación matricial. Forma (2, K)
         N_unit_T = N_unit.T 
-        
-        filtered_rocks = {}
-        
-        for traj_id, traj in rocks_dict.items():
-            # C. np.asarray() evita duplicar en memoria si el array ya era float32
-            points = np.asarray(traj[:, 1:3], dtype=np.float32)
-            
-            if points.shape[1] != 2 or points.shape[0] == 0:
+
+        traj_map = {str(k): v for k, v in trajectories.items()}
+
+        for track_str, data in resultados.items():
+            if track_str not in traj_map:
+                data["escape_relativo"] = 0.0
                 continue
                 
-            # D. Multiplicación Matricial + Short-Circuit
-            # points @ N_unit_T calcula (P • N) para TODOS los puntos contra TODAS las normales al mismo tiempo.
-            # Al restar 'C', aplicamos broadcasting sin usar memoria extra.
-            # np.any() detiene la evaluación entera devolviendo True si halla 1 solo punto fuera del delta.
-            if np.any(points @ N_unit_T - C > dynamic_delta_px):
-                filtered_rocks[traj_id] = traj
+            traj = traj_map[track_str]
+            if area <= 0 or len(traj) == 0:
+                data["escape_relativo"] = 0.0
+                continue
                 
-        context["outside_origin_rocks_dict"] = filtered_rocks
+            points = traj[:, 1:3].astype(np.float32)
+            max_dist_outside = np.max(points @ N_unit_T - C)
+            
+            if max_dist_outside <= 0:
+                # La roca cayó dentro del polígono original
+                data["escape_relativo"] = 0.0
+            else:
+                # 1. Calculamos el "Diámetro Equivalente" del área de origen (voladura)
+                diametro_origen = 2 * np.sqrt(area / np.pi)
+                
+                # 2. Factor de escape relativo (Cuántas veces el diámetro voló hacia afuera)
+                factor_escape = max_dist_outside / diametro_origen
+                
+                data["escape_relativo"] = round(float(factor_escape), 2)
+                
+        context["json_resultados"] = resultados
+        return context
+class TrajectorySmoothnessNode(PipelineNode):
+    def __init__(self, name: str = "14_TrajectorySmoothness"):
+        super().__init__(name)
+
+    def _calc_2d_adjusted_r2(self, x: np.ndarray, y: np.ndarray, t: np.ndarray, degree: int) -> float:
+        """
+        Calcula el R2 ajustado evaluando el error 2D (distancia real en pixeles).
+        """
+        n = len(t)
+        p = degree + 1  # Parámetros (2 para línea, 3 para parábola)
+        
+        # Si hay muy pocos puntos para el modelo, el R2 no es confiable
+        if n <= p + 1: 
+            return 0.0
+            
+        # 1. Ajuste matemático ultra rápido
+        coef_x = np.polyfit(t, x, degree)
+        coef_y = np.polyfit(t, y, degree)
+        
+        pred_x = np.polyval(coef_x, t)
+        pred_y = np.polyval(coef_y, t)
+        
+        # 2. Suma de Errores Cuadráticos (Distancia geométrica real 2D)
+        sse = np.sum((x - pred_x)**2 + (y - pred_y)**2)
+        
+        # 3. Suma Total de Cuadrados (Varianza natural del vuelo)
+        sst = np.sum((x - np.mean(x))**2 + (y - np.mean(y))**2)
+        
+        if sst == 0:
+            return 0.0
+            
+        # R2 Clásico
+        r2 = 1.0 - (sse / sst)
+        
+        # R2 Ajustado: Penaliza modelos si no hay suficientes puntos para respaldarlos
+        r2_adj = 1.0 - ((1.0 - r2) * (n - 1) / (n - p))
+        
+        return float(r2_adj)
+
+    def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        resultados = context.get("json_resultados")
+        trajectories = context.get("filtered_rocks_dict")
+        
+        if not resultados or not trajectories:
+            return context
+
+        traj_map = {str(k): v for k, v in trajectories.items()}
+
+        for track_str, data in resultados.items():
+            if track_str not in traj_map:
+                data["r2_score"] = 0.0
+                continue
+                
+            traj = traj_map[track_str]
+            n_puntos = len(traj)
+            
+            # Exigimos al menos 5 puntos. Un zigzag de 4 puntos 
+            # engañaría fácilmente a un ajuste parabólico.
+            if n_puntos < 5:
+                data["r2_score"] = 0.0
+                continue
+            
+            # Extracción inmediata sin copias de memoria
+            x = traj[:, 1]
+            y = traj[:, 2]
+            t = np.arange(n_puntos)
+            
+            try:
+                # Evaluación
+                r2_lin = self._calc_2d_adjusted_r2(x, y, t, degree=1)
+                r2_par = self._calc_2d_adjusted_r2(x, y, t, degree=2)
+                
+                mejor_r2 = max(r2_lin, r2_par)
+                
+                # Los modelos pueden dar R2 negativo si la predicción es peor que una línea plana.
+                # Lo acotamos estrictamente entre 0.0 y 1.0
+                data["r2_score"] = max(0.0, min(1.0, round(mejor_r2, 3)))
+                
+            except (np.linalg.LinAlgError, RuntimeWarning):
+                data["r2_score"] = 0.0
+
+        context["json_resultados"] = resultados
         return context
