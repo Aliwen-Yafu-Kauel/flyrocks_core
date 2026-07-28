@@ -160,7 +160,7 @@ class DBSCANClusteringNode(PipelineNode):
         if tensor is None:
             return context
 
-        frames_unique = np.sort(np.unique(tensor[:, 2]))
+        frames_unique = np.sort(np.unique(tensor[:, 2]))[::-1]
         detections_by_frame = {}
         
         for t in frames_unique:
