@@ -20,7 +20,7 @@ class TrajectoryCategorizationNode(PipelineNode):
         print(f"[{self.name}] Iniciando categorización de trayectorias y cálculo de distancias...")
         
         # 1. Obtener datos del contexto
-        trajectories = context.get("filtered_rocks_dict", {}) 
+        trajectories = context.get("outside_origin_rocks_dict", {})  #"outside_origin_rocks_dict", "filtered_rocks_dict" 
         safety_zone_raw = context.get("expected_projection_zone")
         video_path = context.get("video_path")
         h_matrix_raw = context.get("h_matrix")
