@@ -13,3 +13,5 @@ data/
 *.html
 src/temp_videos/
 src/flyrocks.db
+temp_videos/
+flyrocks.db

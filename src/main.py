@@ -10,8 +10,12 @@ from fastapi.staticfiles import StaticFiles
 
 from utils.database import engine, Job
 from utils.services import run_pipeline_task
-
-# Aseguramos que exista una carpeta para guardar los videos que suba el usuario
+import numpy as np
+from pydantic import BaseModel
+from typing import List, Dict, Any
+from utils.nodes.velocity_analysis import HighVelocityFilterNode
+from utils.nodes.trajectory_categorization import TrajectoryCategorizationNode
+from utils.nodes.trajectory_analysis import GridSearchNode, KalmanTrackerNode, TrajectoryCleanerNode
 os.makedirs("temp_videos", exist_ok=True)
 
 @asynccontextmanager
@@ -28,14 +32,13 @@ app.mount("/temp_videos", StaticFiles(directory="temp_videos"), name="temp_video
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En desarrollo permitimos todo. En prod, pones la URL de tu front
+    allow_origins=["*"], 
     allow_credentials=True,
-    allow_methods=["*"],  # Permite POST, GET, OPTIONS, etc.
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --- ENDPOINT PARA DISPARAR EL ANÁLISIS ---
-# Cambiamos la ruta a /api/analyze para que haga match con el fetch del JS
 @app.post("/api/analyze")
 async def start_analysis(
     background_tasks: BackgroundTasks,
@@ -44,7 +47,6 @@ async def start_analysis(
     expected_projection_zone: str = Form(...),
     h_matrix: str = Form(...)
 ):
-    # 1. Parsear y validar los strings JSON que vienen del form
     try:
         origin_zone_parsed = json.loads(origin_zone)
         expected_zone_parsed = json.loads(expected_projection_zone)
@@ -52,21 +54,16 @@ async def start_analysis(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Los parámetros de zonas o matriz deben ser JSON válidos.")
 
-    # 2. Guardar el archivo de video temporalmente en disco
-    # Esto es necesario porque run_pipeline_task probablemente necesite un 'path' físico
     video_path = f"temp_videos/{video.filename}"
     with open(video_path, "wb") as buffer:
         shutil.copyfileobj(video.file, buffer)
 
-    # 3. Creamos el registro en la DB
     with Session(engine) as session:
         new_job = Job(status="Iniciando...", progress=0)
         session.add(new_job)
         session.commit()
         session.refresh(new_job)
     
-    # 4. Enviamos la tarea pesada a segundo plano
-    # IMPORTANTE: Asegúrate de que `run_pipeline_task` acepte estos nuevos parámetros en utils/services.py
     background_tasks.add_task(
         run_pipeline_task, 
         new_job.id, 
@@ -87,7 +84,6 @@ async def websocket_job_status(websocket: WebSocket, job_id: str):
         while True:
             job_data = None
             
-            # --- BLOQUE 1: Leer la Base de Datos con cuidado ---
             try:
                 with Session(engine) as session:
                     job = session.get(Job, job_id)
@@ -102,28 +98,21 @@ async def websocket_job_status(websocket: WebSocket, job_id: str):
                             "has_report": False
                         }
             except Exception as db_error:
-                # Solo atrapamos errores de SQLite aquí
                 print(f"⏳ Base de datos ocupada. Reintentando...")
                 await asyncio.sleep(1)
-                continue  # Volvemos al inicio del while
+                continue 
 
-            # Si el job_id no existe en la base de datos
             if not job_data:
                 await websocket.send_json({"error": "Job no encontrado"})
                 break
             
-            # --- BLOQUE 2: Enviar los datos al Frontend ---
-            # Si el frontend se desconectó, esto lanzará un error que romperá el while
             await websocket.send_json(job_data)
 
-            # Si el proceso terminó con éxito o error, cerramos el bucle
             if not job_data["is_running"]:
                 break
                 
-            # Esperamos 1 segundo antes de la próxima actualización
             await asyncio.sleep(1)
             
-        # Si salimos del bucle limpiamente, cerramos la conexión
         await websocket.close()
         
     except WebSocketDisconnect:
@@ -136,15 +125,83 @@ async def websocket_job_status(websocket: WebSocket, job_id: str):
 @app.get("/api/results/{job_id}")
 def get_job_results(job_id: str):
     with Session(engine) as session:
-        # Buscamos el registro en la base de datos usando el UUID
         job = session.get(Job, job_id)
         
         if not job:
-            # Si no existe, devolvemos un error 404 (Not Found)
             raise HTTPException(status_code=404, detail="Análisis no encontrado")
         
-        # FastAPI automáticamente convierte el modelo Job de SQLModel a JSON
         return job
+
+# --- ESQUEMA PARA LA UNIFICACIÓN ---
+class UnificacionRequest(BaseModel):
+    trayectorias: list
+    h_matrix: list
+    expected_projection_zone: list
+    video_filename: str
+    base_patience: int  # <-- Nuevo parámetro heredado
+
+# --- ENDPOINT DE UNIFICACIÓN ESTRICTO ---
+@app.post("/api/unificar_trayectorias")
+def unificar_trayectorias(request: UnificacionRequest):
+    print("--- INICIANDO UNIFICACIÓN MULTI-ESCENARIO ---")
+    
+    escenarios_resultados = {}
+    multiplicadores = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]  # <-- Escenarios de multiplicación de paciencia
+
+    for mult in multiplicadores:
+        # 1. Construir las detecciones DESDE CERO en cada iteración
+        frames_unique = set()
+        detections_by_frame = {}
+        for tray in request.trayectorias:
+            puntos = tray.get("puntos", tray.get("puntos_px", tray.get("points", [])))
+            frames = tray.get("frames", tray.get("frame_ids", []))
+            
+            for pt, f in zip(puntos, frames):
+                frames_unique.add(f)
+                if f not in detections_by_frame:
+                    detections_by_frame[f] = []
+                
+                # 🚀 CORRECCIÓN A: Pasamos estrictamente [x, y], sin el 1.0 al final
+                detections_by_frame[f].append([pt[0], pt[1]])
+                
+        frames_unique = sorted(list(frames_unique))
+        
+        # 🚀 CORRECCIÓN B: Convertimos las listas de Python a tensores de Numpy
+        for f in detections_by_frame:
+            detections_by_frame[f] = np.array(detections_by_frame[f])
+        
+        # 2. Definir la paciencia y distancia exactas para ESTE escenario
+        paciencia_calculada = int(request.base_patience * mult)
+        distancia_calculada = float(30.0 * np.log(2+mult)) 
+        
+        # 3. Armar el contexto sin el GridSearchNode
+        context = {
+            "unique_frames": frames_unique, 
+            "detections_by_frame": detections_by_frame,
+            "velocity_threshold": 0.0,
+            "h_matrix": request.h_matrix,
+            "expected_projection_zone": request.expected_projection_zone,
+            "video_path": f"temp_videos/{request.video_filename}",
+            "optimal_patience": paciencia_calculada,
+            "max_dist": distancia_calculada # 🚀 NUEVO: Inyectamos el radio expandido
+        }
+        
+        # 4. Ejecutar la tubería estricta
+        context = KalmanTrackerNode(name=f"Kalman_{mult}").run(context)
+        context = TrajectoryCleanerNode(name=f"Cleaner_{mult}").run(context)
+        context = HighVelocityFilterNode(name=f"Filter_{mult}").run(context)
+        context = TrajectoryCategorizationNode(name=f"Categorizer_{mult}", output_filename=None).run(context)
+        
+        # 5. Extraer y guardar las trayectorias de este escenario
+        # 🚀 CORRECCIÓN: Extraemos desde json_resultados, que es donde el Categorizador deja la lista final
+        resultado = context.get("json_resultados", {}).get("trayectorias", [])
+        
+        escenarios_resultados[str(mult)] = resultado
+        
+        print(f"✅ Escenario {mult}x (Paciencia: {paciencia_calculada}) -> {len(resultado)} trayectorias resultantes.")
+
+    # Retornamos el diccionario completo con todos los escenarios pre-calculados
+    return {"escenarios": escenarios_resultados}
 
 if __name__ == "__main__":
     import uvicorn

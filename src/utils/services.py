@@ -40,7 +40,7 @@ def run_pipeline_task(
         # --- Instanciamos los nodos ---
         extractor = EventExtractorNode(name="1_VideoExtractor", noise_threshold=8)
         energy_filter = EnergyPercentileFilterNode(name="2_EnergyFilter", percentile=96.0)
-        clustering = DBSCANClusteringNode(name="3_SpatialClustering", eps=5.0)
+        clustering = DBSCANClusteringNode(name="3_SpatialClustering", eps=3.0)
         grid_search = GridSearchNode(name="4_GridSearchOptimizer", cores=4)
         tracker = KalmanTrackerNode(name="5_KalmanTracker")
         cleaner = TrajectoryCleanerNode(name="6_TrajectoryCleaner")

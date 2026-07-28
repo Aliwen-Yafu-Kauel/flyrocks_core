@@ -160,7 +160,7 @@ class DBSCANClusteringNode(PipelineNode):
         if tensor is None:
             return context
 
-        frames_unique = np.sort(np.unique(tensor[:, 2]))
+        frames_unique = np.sort(np.unique(tensor[:, 2]))[::-1]
         detections_by_frame = {}
         
         for t in frames_unique:
@@ -225,20 +225,25 @@ class KalmanTrackerNode(PipelineNode):
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
         frames = context.get("unique_frames")
         detections = context.get("detections_by_frame")
-        patience = context.get("optimal_patience", 15) # Default fallback
+        patience = context.get("optimal_patience", 15)
+        
+        # 🚀 NUEVO: Extraemos la distancia máxima, con 30.0 por defecto
+        max_dist = context.get("max_dist", 30.0) 
         
         if frames is None:
             return context
 
-        logger.info(f"[{self.name}] Running final tracking with patience={patience}...")
-        raw_trajectories = run_tracking_core(frames, detections, max_lost_frames=patience)
+        logger.info(f"[{self.name}] Running final tracking with patience={patience} and max_dist={max_dist}...")
+        
+        # 🚀 NUEVO: Le pasamos la max_dist al motor central
+        raw_trajectories = run_tracking_core(frames, detections, max_lost_frames=patience, max_dist=max_dist)
         
         context["raw_trajectories"] = raw_trajectories
         return context
 
 
 class TrajectoryCleanerNode(PipelineNode):
-    """Filters out noise, trims ghost frames, and formats output for export."""
+    """Filters out noise, removes ALL ghost frames, and formats output for export."""
     def __init__(self, name: str = "TrajectoryCleaner"):
         super().__init__(name)
 
@@ -251,29 +256,29 @@ class TrajectoryCleanerNode(PipelineNode):
         valid_count, mean_dist, valid_trajs = evaluate_trajectories(raw_trajs)
         logger.info(f"[{self.name}] Quality Check: {valid_count} valid trajectories (Mean Dist: {mean_dist:.2f} px).")
 
-        # 2. Trim trailing ghost frames & format as tensor
+        # 2. Extract strictly REAL frames & format as tensor
         export_data = []
         clean_id = 0 
         
         for tr in valid_trajs:
             history = np.array(tr.history)
-            real_indices = np.where(history[:, 3] == 1.0)[0]
             
-            if len(real_indices) < 2:
+            # MAGIA AQUÍ: Filtramos la matriz completa conservando SOLO donde la columna 3 (is_real) es 1.0 (True)
+            real_history = history[history[:, 3] == 1.0]
+            
+            if len(real_history) < 2:
                 continue
                 
-            last_real_idx = real_indices[-1]
-            trimmed_history = history[:last_real_idx + 1]
-            
-            ids = np.full((len(trimmed_history), 1), clean_id)
-            final_trace = np.column_stack((ids, trimmed_history[:, :3]))
+            # Construimos el tensor final solo con los puntos reales (sin la bandera booleana)
+            ids = np.full((len(real_history), 1), clean_id)
+            final_trace = np.column_stack((ids, real_history[:, :3]))
             export_data.append(final_trace)
             clean_id += 1
             
         if export_data:
             final_tensor = np.vstack(export_data)
             context["final_trajectories"] = final_tensor
-            logger.info(f"[{self.name}] Created final tensor. Total exported objects: {clean_id}")
+            logger.info(f"[{self.name}] Created final tensor with strictly REAL detections. Total exported objects: {clean_id}")
         else:
             context["final_trajectories"] = None
             logger.warning(f"[{self.name}] No trajectories survived cleaning.")

@@ -77,9 +77,20 @@
         <section id="interactive-results" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-8 mb-8 fade-in">
             <h3 class="text-xl font-bold mb-4 text-slate-800">Filtrado Interactivo por R²</h3>
             
-            <div class="mb-6">
+            <div id="unification-controls" class="mb-6">
                 <label class="font-semibold text-slate-600">Umbral R²: <span id="r2-value-display" class="text-blue-600">0.80</span></label>
                 <input type="range" id="r2-slider" min="0.0" max="1.0" step="0.001" value="0.80" class="w-full mt-2 accent-blue-600">
+                <button id="btn-unificar" class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-md flex justify-center items-center">
+                    <i class="fa-solid fa-link mr-2"></i> Unificar Trayectorias Visibles
+                </button>
+            </div>
+            <div id="elasticity-controls" class="hidden mb-6 bg-blue-50 p-5 rounded-xl border border-blue-200 shadow-inner">
+                <div class="flex justify-between items-center mb-2">
+                    <label class="font-semibold text-slate-800">Fuerza de Unificación</label>
+                    <span id="elasticity-value-display" class="text-blue-700 font-bold bg-blue-200 px-3 py-1 rounded-full text-sm">1.0x</span>
+                </div>
+                <p class="text-xs text-slate-500 mb-3">Mueve el control deslizante para ajustar en tiempo real el algoritmo matemático (1.0x a 10.0x).</p>
+                <input type="range" id="elasticity-slider" min="1.0" max="10.0" step="1.0" value="1.0" class="w-full accent-blue-600">
             </div>
 
             <!-- Contenedor relativo para montar el Canvas sobre la Imagen -->
@@ -147,7 +158,6 @@
             
             ws = new WebSocket(wsUrl);
 
-            // Manejo de errores de red
             ws.onerror = (error) => {
                 console.error("❌ Error de red en el WebSocket:", error);
                 const statusText = document.getElementById('status-text');
@@ -155,14 +165,11 @@
                 statusText.classList.replace('text-blue-600', 'text-red-600');
             };
 
-            // Detectar exactamente por qué se cierra
             ws.onclose = (event) => {
                 console.warn(`🔌 WebSocket cerrado. Código: ${event.code}, Razón: ${event.reason || "Ninguna"}`);
             };
 
             ws.onmessage = (event) => {
-                console.log("📥 Mensaje del backend:", event.data);
-                
                 const data = JSON.parse(event.data);
                 const statusText = document.getElementById('status-text');
                 
@@ -174,21 +181,16 @@
                     return; 
                 }
 
-                // 3. Actualizamos la interfaz normal
                 statusText.innerText = data.status || "Procesando...";
                 document.getElementById('progress-bar').style.width = `${data.percentage || 0}%`;
                 document.getElementById('percentage-text').innerText = Math.round(data.percentage || 0);
 
-                // --- FORZAMOS is_running A TRUE POR DEFECTO ---
-                // Solo será falso si el backend explícitamente manda un false, un "false" o un 0.
                 let isRunning = true; 
                 if (data.is_running === false || data.is_running === 0 || data.is_running === "false") {
                     isRunning = false;
                 }
 
-                // 4. Evaluamos si el proceso terminó
                 if (!isRunning) {
-                    
                     if (data.error_message) {
                         statusText.innerText = `❌ Error Crítico: ${data.error_message}`;
                         statusText.classList.replace('text-blue-600', 'text-red-600');
@@ -197,7 +199,6 @@
                         document.getElementById('results-actions').classList.remove('hidden');
                         document.getElementById('btn-json').href = `${API_BASE_URL}/api/results/${jobId}`;
 
-                        // ✨ AQUÍ LLAMAS A LA INTERACTIVIDAD ✨
                         inicializarInteractividad(jobId);
 
                         if (data.has_report) {
@@ -213,13 +214,11 @@
                         statusText.innerText = "✅ Proceso completo.";
                         statusText.classList.replace('text-blue-600', 'text-green-600');
                     }
-                    
                     ws.close();
                 }
             };
         }
 
-        // Formulario 1: Disparar el análisis principal
         document.getElementById('analyze-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('submit-btn');
@@ -244,11 +243,9 @@
                 document.getElementById('upload-section').classList.add('hidden');
                 document.getElementById('progress-section').classList.remove('hidden');
                 
-                // Restauramos color por si hubo un error previo
                 document.getElementById('status-text').classList.replace('text-red-600', 'text-blue-600');
                 document.getElementById('progress-bar').classList.replace('bg-red-600', 'bg-blue-600');
                 
-                // Conectamos el WebSocket
                 connectWS(currentJobId);
             } catch (err) {
                 alert('Error: ' + err.message);
@@ -257,14 +254,12 @@
             }
         });
 
-        // Botón para mostrar la sección de reporte
         document.getElementById('btn-open-report-form').onclick = () => {
             const section = document.getElementById('report-form-section');
             section.classList.remove('hidden');
             section.scrollIntoView({ behavior: 'smooth' });
         };
 
-        // Formulario 2: Generar PDF
         document.getElementById('generate-report-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('btn-generate-pdf');
@@ -291,6 +286,8 @@
 
         // --- FUNCIONES INTERACTIVAS ---
         let trayectoriasGlobales = [];
+        let basePatienceGlobal = 15; // Valor por defecto como respaldo
+        let escenariosUnificados = {}; // Almacenará los 5 pre-cálculos
         let canvas = document.getElementById('trajectory-canvas');
         let ctx = canvas.getContext('2d');
         let bgImage = document.getElementById('bg-image');
@@ -300,36 +297,31 @@
         async function inicializarInteractividad(jobId) {
             document.getElementById('interactive-results').classList.remove('hidden');
             
-            // 1. Obtener la data (JSON) de la API
             const res = await fetch(`${API_BASE_URL}/api/results/${jobId}`);
             const data = await res.json();
             
-            // Aquí sacamos las trayectorias de la BD
             trayectoriasGlobales = data.json_data.trayectorias || [];
-            
-            // 2. Cargar la imagen de fondo (FastAPI ahora nos deja verla)
+            // Intentar recuperar la paciencia del primer procesamiento si el backend la envía, si no, usa 15.
+            if (data.json_data && data.json_data.optimal_patience) {
+                basePatienceGlobal = data.json_data.optimal_patience;
+            }
             bgImage.src = `${API_BASE_URL}/temp_videos/background.jpg`;
             
-            // 3. Ajustar el tamaño del canvas cuando la imagen cargue
             bgImage.onload = () => {
                 canvas.width = bgImage.naturalWidth;
                 canvas.height = bgImage.naturalHeight;
                 dibujarTrayectorias();
             };
+            
         }
 
         function dibujarTrayectorias() {
-            // 1. Leemos el valor lineal puro del slider (de 0 a 1)
             const valorLineal = parseFloat(slider.value);
-            
-            // 2. Aplicamos la curva matemática para concentrar la resolución cerca del 1
             const umbral = 1 - Math.pow(1 - valorLineal, 3);
             
-            // Mostramos el valor calculado con 3 decimales para apreciar la precisión
             display.innerText = umbral.toFixed(5);
             
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            let contDibujadas = 0;
 
             trayectoriasGlobales.forEach((tray, index) => {
                 const r2 = tray.r2_score !== undefined ? tray.r2_score : (tray.r2 !== undefined ? tray.r2 : 1.0);
@@ -338,7 +330,6 @@
                     const rawPts = tray.puntos || tray.puntos_px || tray.points || [];
                     
                     if (rawPts.length > 1) {
-                        contDibujadas++;
                         ctx.beginPath();
                         
                         const p0 = Array.isArray(rawPts[0]) ? { x: rawPts[0][0], y: rawPts[0][1] } : rawPts[0];
@@ -349,12 +340,10 @@
                             ctx.lineTo(p.x, p.y);
                         }
 
-                        // Colores únicos basados en el ángulo áureo
                         ctx.strokeStyle = `hsla(${(index * 137.5) % 360}, 85%, 55%, 0.9)`;
                         ctx.lineWidth = Math.max(3, Math.round(canvas.width / 400)); 
                         ctx.stroke();
 
-                        // Dibujar punto final (Impacto)
                         const pLast = Array.isArray(rawPts[rawPts.length - 1]) ? 
                             { x: rawPts[rawPts.length - 1][0], y: rawPts[rawPts.length - 1][1] } : rawPts[rawPts.length - 1];
 
@@ -368,11 +357,89 @@
                     }
                 }
             });
-
-            console.log(`🎨 Dibujadas ${contDibujadas} trayectorias con R² >= ${umbral.toFixed(5)}`);
         }
 
         slider.addEventListener('input', dibujarTrayectorias);
+
+        // --- LÓGICA DEL BOTÓN DE UNIFICACIÓN ---
+        document.getElementById('btn-unificar').addEventListener('click', async () => {
+            const btn = document.getElementById('btn-unificar');
+            const textoOriginal = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Unificando...';
+            btn.disabled = true;
+
+            const valorLineal = parseFloat(slider.value);
+            const umbral = 1 - Math.pow(1 - valorLineal, 3);
+
+            const trayectoriasValidas = trayectoriasGlobales.filter(tray => {
+                const r2 = tray.r2_score !== undefined ? tray.r2_score : (tray.r2 !== undefined ? tray.r2 : 1.0);
+                return r2 >= umbral;
+            });
+
+            const videoInput = document.getElementById('video').files[0];
+            const videoName = videoInput ? videoInput.name : "video.mp4";
+            const hMatrix = JSON.parse(document.getElementById('h_matrix').value);
+            const expectedZone = JSON.parse(document.getElementById('expected_zone').value);
+
+            try {
+                // 2. ENVIAR TRAYECTORIAS + CONTEXTO (Ahora con la paciencia heredada)
+                const res = await fetch(`${API_BASE_URL}/api/unificar_trayectorias`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        trayectorias: trayectoriasValidas,
+                        h_matrix: hMatrix,
+                        expected_projection_zone: expectedZone,
+                        video_filename: videoName,
+                        base_patience: basePatienceGlobal // <-- Pasamos la paciencia base
+                    })
+                });
+
+                if (!res.ok) throw new Error("Error unificando trayectorias en el backend");
+                
+                const dataNuevas = await res.json();
+                
+                // 3. GUARDAR TODOS LOS ESCENARIOS PRE-CALCULADOS
+                escenariosUnificados = dataNuevas.escenarios || {};
+                
+                // 4. TRANSICIÓN DE INTERFAZ: Ocultar R2, mostrar Elasticidad
+                const unificationControls = document.getElementById('unification-controls');
+                const elasticityControls = document.getElementById('elasticity-controls');
+                
+                if (unificationControls) unificationControls.classList.add('hidden');
+                if (elasticityControls) elasticityControls.classList.remove('hidden');
+                
+                document.querySelector('#interactive-results h3').innerHTML = '<i class="fa-solid fa-link text-blue-500 mr-2"></i> Unificación de Trayectorias (En Vivo)';
+                
+                // 5. ESTABLECER ESCENARIO INICIAL (1.0x) Y DIBUJAR
+                const sliderElasticidad = document.getElementById('elasticity-slider');
+                sliderElasticidad.value = "1.0";
+                
+                // Forzamos el slider original de R2 a 0 para que no limite la vista actual
+                slider.value = 0; 
+                display.innerText = "0.000"; 
+                
+                trayectoriasGlobales = escenariosUnificados["1.0"] || [];
+                dibujarTrayectorias();
+                
+            } catch (error) {
+                console.error("Detalle del error en JS:", error);
+                alert("Hubo un problema al dibujar la unificación. Revisa la consola (F12) para más detalles.");
+            } finally {
+                btn.innerHTML = textoOriginal;
+                btn.disabled = false;
+            }
+        });
+        document.getElementById('elasticity-slider')?.addEventListener('input', (e) => {
+            const multiplicador = parseFloat(e.target.value).toFixed(1); 
+            document.getElementById('elasticity-value-display').innerText = `${multiplicador}x`;
+            
+            if (escenariosUnificados[multiplicador]) {
+                trayectoriasGlobales = escenariosUnificados[multiplicador];
+                dibujarTrayectorias(); 
+            }
+        });
+
     </script>
 </body>
 </html>
