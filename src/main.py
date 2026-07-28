@@ -6,6 +6,7 @@ from fastapi import FastAPI, BackgroundTasks, WebSocket, WebSocketDisconnect, Fi
 from sqlmodel import SQLModel, Session
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from utils.database import engine, Job
 from utils.services import run_pipeline_task
@@ -22,6 +23,8 @@ async def lifespan(app: FastAPI):
     engine.dispose()
 
 app = FastAPI(title="API de Análisis Flyrocks", lifespan=lifespan)
+
+app.mount("/temp_videos", StaticFiles(directory="temp_videos"), name="temp_videos")
 
 app.add_middleware(
     CORSMiddleware,
@@ -71,7 +74,7 @@ async def start_analysis(
         origin_zone_parsed, 
         expected_zone_parsed, 
         h_matrix_parsed,
-        output_filename="voladura_analisis.mp4"  
+        output_filename="background.jpg"  
     )
     
     return {"job_id": new_job.id, "mensaje": "Análisis encolado en segundo plano"}

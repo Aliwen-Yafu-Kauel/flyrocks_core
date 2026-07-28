@@ -12,6 +12,8 @@ from utils.nodes.velocity_analysis import (
     TrajectoryVelocityNode, GaussianThresholdNode,
     HighVelocityFilterNode  
 )  
+from utils.nodes.trajectory_smoothness import TrajectorySmoothnessNode
+from utils.nodes.image_renderer import BackgroundExtractorNode
 from utils.nodes.trajectory_categorization import TrajectoryCategorizationNode
 from utils.nodes.trajectory_filters import ZigzagFilterNode, OriginZoneFilterNode
 from utils.nodes.visualization import VideoRendererNode
@@ -50,8 +52,11 @@ def run_pipeline_task(
         rock_filter = HighVelocityFilterNode(name="9_HighVelocityFilter")
         zizag_filter = ZigzagFilterNode(name="10_ZigzagFilter", max_tortuosity=1.25)
         origin_filter = OriginZoneFilterNode(name="10_OriginZoneFilter")
-        categorizer = TrajectoryCategorizationNode(name="11_TrajectoryCategorizer")
+        #categorizer = TrajectoryCategorizationNode(name="11_TrajectoryCategorizer")
         #render = VideoRendererNode(name="11_VideoRenderer", output_filename=output_filename)
+        categorizer = TrajectoryCategorizationNode(name="10_TrajectoryCategorizer")
+        smooth_filter = TrajectorySmoothnessNode(name="9.5_SmoothnessFilter")
+        bg_extractor = BackgroundExtractorNode(name="11_BackgroundExtractor", output_filename=output_filename)
 
         # Mapeamos los nodos con su mensaje de estado y % de progreso esperado al finalizar
         pipeline_steps = [
@@ -67,8 +72,8 @@ def run_pipeline_task(
             (zizag_filter, "Filtrando trayectorias invalidas", 80),
             (origin_filter, "Filtrando trayectorias fuera de zona de origen", 85),
             (categorizer, "Categorizando trayectorias", 90),
-
-            #(render, "Renderizando video final", 98)
+            (smooth_filter, "Calculando R2 de trayectorias", 95),
+            (bg_extractor, "Extrayendo frame de fondo", 98)
         ]
 
         # Inyectamos todos los datos que vienen del frontend
