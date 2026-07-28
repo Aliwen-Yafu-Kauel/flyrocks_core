@@ -71,7 +71,6 @@ class EventExtractorNode(PipelineNode):
         except Exception as e:
             context["error"] = str(e)
         finally:
-            print(f"Frames totales procesados: {frame_index}") # <-- Añade esto
             cap.release()
 
         if event_cloud_4d:
