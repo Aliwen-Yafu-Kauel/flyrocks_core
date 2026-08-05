@@ -13,12 +13,13 @@
 </head>
 <body class="bg-slate-50 font-sans text-slate-900">
 
-    <div class="max-w-4xl mx-auto py-12 px-4">
+    <div class="max-w-5xl mx-auto py-12 px-4">
         <header class="text-center mb-12">
             <h1 class="text-4xl font-extrabold text-slate-800 mb-2">Flyrocks <span class="text-blue-600">Tracker</span></h1>
             <p class="text-slate-500 text-lg">Análisis cinemático y reportabilidad técnica de voladura.</p>
         </header>
 
+        <!-- SECCIÓN 1: UPLOAD -->
         <section id="upload-section" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 mb-8">
             <h2 class="text-xl font-bold mb-6 flex items-center text-slate-700">
                 <i class="fa-solid fa-video mr-3 text-blue-500"></i> Nuevo Análisis
@@ -42,13 +43,40 @@
                         <label class="block text-sm font-semibold mb-2">Matriz de Homografía (H)</label>
                         <textarea id="h_matrix" class="w-full p-3 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg">[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]</textarea>
                     </div>
+
+                    <!-- NUEVA SECCIÓN: PARÁMETROS AVANZADOS -->
+                    <div class="md:col-span-2 pt-4 border-t border-slate-100">
+                        <h3 class="text-sm font-bold text-slate-700 mb-4"><i class="fa-solid fa-sliders text-blue-400 mr-2"></i>Parámetros del Algoritmo</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-600 mb-1">Percentil de Energía</label>
+                                <input type="number" id="percentile" min="0" max="100" step="0.1" value="96.0" required 
+                                    class="w-full text-sm border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                                <p class="text-[10px] text-slate-400 mt-1">Rango: 0 a 100</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-600 mb-1">Umbral Sigma</label>
+                                <input type="number" id="sigma" min="0.0" max="1.0" step="0.01" value="0.5" required 
+                                    class="w-full text-sm border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                                <p class="text-[10px] text-slate-400 mt-1">Rango: 0.0 a 1.0</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-600 mb-1">ESP (Clustering DBSCAN)</label>
+                                <input type="number" id="esp" min="1.0" max="7.0" step="0.1" value="5.0" required 
+                                    class="w-full text-sm border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
+                                <p class="text-[10px] text-slate-400 mt-1">Rango: 1.0 a 7.0</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+                
                 <button type="submit" id="submit-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg flex justify-center items-center">
                     <i class="fa-solid fa-play mr-2"></i> Iniciar Pipeline de Tracking
                 </button>
             </form>
         </section>
 
+        <!-- SECCIÓN 2: PROGRESO -->
         <section id="progress-section" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-8 mb-8 fade-in">
             <div class="flex justify-between items-center mb-6">
                 <div>
@@ -89,6 +117,65 @@
             </div>
         </section>
 
+        <!-- SECCIÓN 3: VISUALIZACIÓN INTERACTIVA -->
+        <section id="visualization-section" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-8 mb-8 fade-in">
+            <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+                <h2 class="text-xl font-bold flex items-center text-slate-700">
+                    <i class="fa-solid fa-layer-group mr-3 text-purple-500"></i> Filtros de Trayectorias
+                </h2>
+                
+                <!-- SELECTOR DE MODO DE COLOR -->
+                <div class="bg-slate-100 p-2 rounded-lg flex gap-4 border border-slate-200 shadow-inner">
+                    <label class="text-sm font-bold text-slate-600 cursor-pointer flex items-center">
+                        <input type="radio" name="color-mode" value="id" checked class="mr-2 accent-purple-600"> Color por ID
+                    </label>
+                    <label class="text-sm font-bold text-slate-600 cursor-pointer flex items-center">
+                        <input type="radio" name="color-mode" value="class" class="mr-2 accent-purple-600"> Por Clasificación
+                    </label>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 bg-slate-50 p-6 rounded-xl border border-slate-100">
+                <!-- Slider: Tortuosidad (Filtro Menor Que) -->
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-2">
+                        Tortuosidad Máxima: <span id="val-tort" class="text-purple-600">0.0</span>
+                    </label>
+                    <input type="range" id="slider-tort" min="1.0" max="10.0" value="10.0" step="0.1" class="w-full accent-purple-600">
+                </div>
+                <!-- Slider: R2 / Smoothness -->
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-2">
+                        R² Score Mínimo: <span id="val-r2" class="text-purple-600">0.00</span>
+                    </label>
+                    <input type="range" id="slider-r2" min="0" max="1" step="0.05" value="0" class="w-full accent-purple-600">
+                </div>
+                <!-- Slider: Escape Relativo (Escala NO-Lineal) -->
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-2">
+                        Escape Relativo Mín: <span id="val-escape" class="text-purple-600">0.00</span>x
+                    </label>
+                    <!-- Va de 0 a 100 internamente para calcular la curva -->
+                    <input type="range" id="slider-escape" min="0" max="100" step="0.1" value="0" class="w-full accent-purple-600">
+                </div>
+            </div>
+
+            <!-- Canvas Container -->
+            <div class="relative w-full border-2 border-slate-200 rounded-xl bg-slate-900 overflow-hidden shadow-inner flex justify-center items-center min-h-[400px]">
+                <div id="canvas-loading" class="absolute text-white/80 animate-pulse text-center">
+                    <i class="fa-solid fa-spinner fa-spin mr-2"></i> Procesando frame de video...
+                </div>
+                <canvas id="traj-canvas" class="w-full h-auto max-h-[70vh] object-contain relative z-10 hidden"></canvas>
+            </div>
+            
+            <div id="classification-legend" class="flex justify-center gap-4 mt-4 text-xs font-semibold text-slate-500 transition-opacity opacity-20">
+                <span class="flex items-center"><span class="w-3 h-3 rounded-full bg-lime-500 mr-1"></span> Proyección Normal</span>
+                <span class="flex items-center"><span class="w-3 h-3 rounded-full bg-orange-500 mr-1"></span> Fuera de Vista</span>
+                <span class="flex items-center"><span class="w-3 h-3 rounded-full bg-red-600 mr-1"></span> Peligrosa</span>
+            </div>
+        </section>
+
+        <!-- SECCIÓN 4: REPORTE -->
         <section id="report-form-section" class="hidden bg-white rounded-2xl shadow-xl border-2 border-red-50 p-8 mb-12 fade-in">
             <div class="flex items-center mb-6">
                 <div class="bg-red-100 p-3 rounded-lg mr-4 text-red-600">
@@ -120,7 +207,6 @@
                                 class="w-full pl-10 pr-4 py-2 border rounded-lg bg-slate-50 focus:ring-2 focus:ring-red-400 outline-none transition-all"
                                 placeholder="Ej: 50.0">
                         </div>
-                        <p class="text-xs text-slate-400 mt-1 italic">Este radio define la zona de exclusión alrededor de la maquinaria en el reporte.</p>
                     </div>
                 </div>
                 <button type="submit" id="btn-generate-pdf" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg flex justify-center items-center">
@@ -141,13 +227,19 @@
         let currentJobId = null;
         let ws = null;
 
+        // Variables de Visualización
+        let globalTrajectories = {};
+        let firstFrameImage = null;
+        let idColors = {}; 
+        let maxEscapeValue = 0; 
+        let maxTortuosity = 1.0;
+
         function connectWS(jobId) {
             if (ws) ws.close();
             const wsUrl = `${API_BASE_URL.replace('http', 'ws')}/ws/progress/${jobId}`;
             
             ws = new WebSocket(wsUrl);
 
-            // Manejo de errores de red
             ws.onerror = (error) => {
                 console.error("❌ Error de red en el WebSocket:", error);
                 const statusText = document.getElementById('status-text');
@@ -155,14 +247,7 @@
                 statusText.classList.replace('text-blue-600', 'text-red-600');
             };
 
-            // Detectar exactamente por qué se cierra
-            ws.onclose = (event) => {
-                console.warn(`🔌 WebSocket cerrado. Código: ${event.code}, Razón: ${event.reason || "Ninguna"}`);
-            };
-
-            ws.onmessage = (event) => {
-                console.log("📥 Mensaje del backend:", event.data);
-                
+            ws.onmessage = async (event) => {
                 const data = JSON.parse(event.data);
                 const statusText = document.getElementById('status-text');
                 
@@ -174,21 +259,16 @@
                     return; 
                 }
 
-                // 3. Actualizamos la interfaz normal
                 statusText.innerText = data.status || "Procesando...";
                 document.getElementById('progress-bar').style.width = `${data.percentage || 0}%`;
                 document.getElementById('percentage-text').innerText = Math.round(data.percentage || 0);
 
-                // --- FORZAMOS is_running A TRUE POR DEFECTO ---
-                // Solo será falso si el backend explícitamente manda un false, un "false" o un 0.
                 let isRunning = true; 
                 if (data.is_running === false || data.is_running === 0 || data.is_running === "false") {
                     isRunning = false;
                 }
 
-                // 4. Evaluamos si el proceso terminó
                 if (!isRunning) {
-                    
                     if (data.error_message) {
                         statusText.innerText = `❌ Error Crítico: ${data.error_message}`;
                         statusText.classList.replace('text-blue-600', 'text-red-600');
@@ -197,44 +277,208 @@
                         document.getElementById('results-actions').classList.remove('hidden');
                         document.getElementById('btn-json').href = `${API_BASE_URL}/api/results/${jobId}`;
 
-                        // ✨ AQUÍ LLAMAS A LA INTERACTIVIDAD ✨
-                        inicializarInteractividad(jobId);
-
-                        if (data.has_report) {
-                            const finalArea = document.getElementById('download-final-pdf-area');
-                            finalArea.classList.remove('hidden');
-                            document.getElementById('btn-download-pdf-final').href = `${API_BASE_URL}/api/report/${jobId}`;
-                            
-                            const genBtn = document.getElementById('btn-generate-pdf');
-                            genBtn.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Reporte Generado';
-                            genBtn.classList.replace('bg-red-600', 'bg-green-600');
-                        }
-                        
                         statusText.innerText = "✅ Proceso completo.";
                         statusText.classList.replace('text-blue-600', 'text-green-600');
+                        
+                        await initializeVisualization(jobId);
                     }
-                    
                     ws.close();
                 }
             };
         }
 
-        // Formulario 1: Disparar el análisis principal
+        async function initializeVisualization(jobId) {
+            document.getElementById('visualization-section').classList.remove('hidden');
+            const loadingText = document.getElementById('canvas-loading');
+            loadingText.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Descargando resultados JSON...';
+            
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/results/${jobId}`);
+                if (!res.ok) throw new Error(`Fallo en la API HTTP ${res.status}`);
+                
+                const responseData = await res.json();
+                
+                // Extracción segura del diccionario
+                globalTrajectories = responseData.json_data || responseData.data || responseData;
+
+                if (!globalTrajectories || Object.keys(globalTrajectories).length === 0) {
+                     throw new Error("El JSON se descargó, pero no contiene trayectorias válidas.");
+                }
+
+                // Extraer límites para Tortuosidad y Escape
+                maxEscapeValue = 0; 
+                maxTortuosity = 1.0; 
+                idColors = {}; 
+                
+                for (const t of Object.values(globalTrajectories)) {
+                    if (!t || typeof t !== 'object') continue;
+                    if (t.escape_relativo && t.escape_relativo > maxEscapeValue) maxEscapeValue = t.escape_relativo;
+                    if (t.tortuosidad && t.tortuosidad > maxTortuosity) maxTortuosity = t.tortuosidad;
+                }
+                
+                // Configurar slider de Tortuosidad
+                const tortSlider = document.getElementById('slider-tort');
+                tortSlider.max = Math.ceil(maxTortuosity * 10) / 10 || 5.0; 
+                tortSlider.value = tortSlider.max; 
+
+                // Configurar slider de Escape Relativo
+                document.getElementById('slider-escape').value = 0; 
+
+                loadingText.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Extrayendo frame del video local...';
+                
+                const fileInput = document.getElementById('video');
+                if (!fileInput.files || fileInput.files.length === 0) {
+                    throw new Error("El archivo de video original ya no está disponible.");
+                }
+
+                const file = fileInput.files[0];
+                const videoURL = URL.createObjectURL(file);
+                const videoEl = document.createElement('video');
+                videoEl.src = videoURL;
+                videoEl.muted = true;
+                videoEl.playsInline = true;
+
+                await new Promise((resolve, reject) => {
+                    videoEl.onloadeddata = () => { videoEl.currentTime = 0.1; };
+                    videoEl.onseeked = () => {
+                        try {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = videoEl.videoWidth;
+                            canvas.height = videoEl.videoHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+                            
+                            firstFrameImage = new Image();
+                            firstFrameImage.onload = () => resolve();
+                            firstFrameImage.onerror = () => reject(new Error("Fallo al codificar la imagen."));
+                            firstFrameImage.src = canvas.toDataURL('image/jpeg', 0.8);
+                        } catch (err) {
+                            reject(new Error("Error dibujando el frame: " + err.message));
+                        }
+                    };
+                    videoEl.onerror = () => reject(new Error("Formato de video no compatible."));
+                });
+
+                loadingText.classList.add('hidden');
+                document.getElementById('traj-canvas').classList.remove('hidden');
+                drawTrajectories();
+
+            } catch (error) {
+                console.error("Error inicializando visualización:", error);
+                loadingText.classList.remove('animate-pulse');
+                loadingText.classList.add('text-red-400', 'bg-slate-900', 'p-4', 'rounded-lg');
+                loadingText.innerHTML = `<div class="text-center"><i class="fa-solid fa-triangle-exclamation text-3xl mb-2 text-red-500"></i><br><strong class="text-white">Error cargando visualización:</strong><br><span class="text-sm opacity-80">${error.message}</span></div>`;
+            }
+        }
+
+        function drawTrajectories() {
+            const canvas = document.getElementById('traj-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            if (!firstFrameImage) return;
+
+            // Restablecer el canvas
+            canvas.width = firstFrameImage.width;
+            canvas.height = firstFrameImage.height;
+            ctx.drawImage(firstFrameImage, 0, 0);
+
+            // Leer valores básicos de la UI
+            const filterTort = parseFloat(document.getElementById('slider-tort').value);
+            const filterR2 = parseFloat(document.getElementById('slider-r2').value);
+            const colorMode = document.querySelector('input[name="color-mode"]:checked').value;
+
+            // ESCALA CÚBICA para el slider de Escape
+            const rawEscapeSlider = parseFloat(document.getElementById('slider-escape').value);
+            const filterEscape = maxEscapeValue * Math.pow(rawEscapeSlider / 100, 3);
+
+            // Actualizar textos UI
+            document.getElementById('val-tort').innerText = filterTort.toFixed(2);
+            document.getElementById('val-r2').innerText = filterR2.toFixed(2);
+            document.getElementById('val-escape').innerText = filterEscape.toFixed(2);
+
+            // Opacidad de la leyenda según modo
+            const legend = document.getElementById('classification-legend');
+            legend.style.opacity = (colorMode === 'id') ? '0.2' : '1';
+
+            ctx.lineWidth = Math.max(2, canvas.width / 500); 
+
+            for (const [trackId, data] of Object.entries(globalTrajectories)) {
+                if (!data || typeof data !== 'object' || !data.puntos) continue;
+
+                const tort = data.tortuosidad || 1.0; 
+                const r2 = data.r2_score || 0.0; 
+                const esc = data.escape_relativo || 0.0;
+
+                // CORTES LÓGICOS
+                if (tort <= filterTort && r2 >= filterR2 && esc >= filterEscape) {
+                    const pts = data.puntos; 
+                    if (pts.length < 4) continue;
+
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0], pts[1]);
+                    for (let i = 2; i < pts.length; i += 2) {
+                        ctx.lineTo(pts[i], pts[i+1]);
+                    }
+                    
+                    if (colorMode === 'id') {
+                        if (!idColors[trackId]) {
+                            const hue = Math.floor(Math.random() * 360);
+                            idColors[trackId] = `hsl(${hue}, 90%, 60%)`;
+                        }
+                        ctx.strokeStyle = idColors[trackId];
+                    } else {
+                        if (data.clasificacion === 'Proyección peligrosa') {
+                            ctx.strokeStyle = '#dc2626'; // Rojo
+                        } else if (data.clasificacion === 'Fuera de vista') {
+                            ctx.strokeStyle = '#f97316'; // Naranja
+                        } else {
+                            ctx.strokeStyle = '#84cc16'; // Verde
+                        }
+                    }
+                    
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // Listeners para interactividad inmediata
+        ['slider-tort', 'slider-r2', 'slider-escape'].forEach(id => {
+            document.getElementById(id).addEventListener('input', drawTrajectories);
+        });
+        
+        document.querySelectorAll('input[name="color-mode"]').forEach(radio => {
+            radio.addEventListener('change', drawTrajectories);
+        });
+
+        // ==========================================
+        // EVENTOS DE LOS FORMULARIOS
+        // ==========================================
         document.getElementById('analyze-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('submit-btn');
             const formData = new FormData();
             
+            // 🔴 AÑADIDOS LOS NUEVOS PARÁMETROS AL FORMDATA
             formData.append('video', document.getElementById('video').files[0]);
             formData.append('origin_zone', document.getElementById('origin_zone').value);
             formData.append('expected_projection_zone', document.getElementById('expected_zone').value);
             formData.append('h_matrix', document.getElementById('h_matrix').value);
+            formData.append('percentile', document.getElementById('percentile').value);
+            formData.append('sigma', document.getElementById('sigma').value);
+            formData.append('esp', document.getElementById('esp').value);
 
             try {
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Subiendo...';
                 
                 const res = await fetch(`${API_BASE_URL}/api/analyze`, { method: 'POST', body: formData });
+                
+                // Si la API rechaza los valores (422 Validación fallida)
+                if (res.status === 422) {
+                    const errData = await res.json();
+                    throw new Error("Datos inválidos: " + JSON.stringify(errData.detail));
+                }
+                
                 if (!res.ok) throw new Error("Error al conectar con la API");
                 
                 const data = await res.json();
@@ -243,12 +487,11 @@
                 document.getElementById('job-id-display').innerText = `ID: ${currentJobId}`;
                 document.getElementById('upload-section').classList.add('hidden');
                 document.getElementById('progress-section').classList.remove('hidden');
+                document.getElementById('visualization-section').classList.add('hidden');
                 
-                // Restauramos color por si hubo un error previo
                 document.getElementById('status-text').classList.replace('text-red-600', 'text-blue-600');
                 document.getElementById('progress-bar').classList.replace('bg-red-600', 'bg-blue-600');
                 
-                // Conectamos el WebSocket
                 connectWS(currentJobId);
             } catch (err) {
                 alert('Error: ' + err.message);
@@ -257,14 +500,13 @@
             }
         });
 
-        // Botón para mostrar la sección de reporte
-        document.getElementById('btn-open-report-form').onclick = () => {
+        document.getElementById('btn-open-report-form').onclick = (e) => {
+            e.preventDefault();
             const section = document.getElementById('report-form-section');
             section.classList.remove('hidden');
             section.scrollIntoView({ behavior: 'smooth' });
         };
 
-        // Formulario 2: Generar PDF
         document.getElementById('generate-report-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('btn-generate-pdf');
@@ -281,6 +523,13 @@
                 
                 const res = await fetch(`${API_BASE_URL}/api/generate_report`, { method: 'POST', body: formData });
                 if (!res.ok) throw new Error("Error en el servidor al generar el reporte");
+                
+                const finalArea = document.getElementById('download-final-pdf-area');
+                finalArea.classList.remove('hidden');
+                document.getElementById('btn-download-pdf-final').href = `${API_BASE_URL}/api/report/${currentJobId}`;
+                
+                btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Reporte Generado';
+                btn.classList.replace('bg-red-600', 'bg-green-600');
 
             } catch (err) {
                 alert(err.message);

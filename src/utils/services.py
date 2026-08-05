@@ -1,9 +1,11 @@
+import os   
+import json
 import logging
+from pathlib import Path
 from typing import Any, Dict
 
 from utils.database import Job, engine
 from utils.nodes.event_extractor import EventExtractorNode
-from utils.nodes.trajectory_filters import ZigzagFilterNode
 from utils.nodes.trajectory_analysis import (
     EnergyPercentileFilterNode, DBSCANClusteringNode, 
     GridSearchNode, KalmanTrackerNode, TrajectoryCleanerNode
@@ -15,50 +17,53 @@ from utils.nodes.velocity_analysis import (
 from utils.nodes.trajectory_smoothness import TrajectorySmoothnessNode
 from utils.nodes.image_renderer import BackgroundExtractorNode
 from utils.nodes.trajectory_categorization import TrajectoryCategorizationNode
-from utils.nodes.trajectory_filters import ZigzagFilterNode, OriginZoneFilterNode
-from utils.nodes.visualization import VideoRendererNode
+from utils.nodes.trajectory_filters import(
+    TortuosityCalculationNode, OriginAreaExpansionNode,
+    TrajectorySmoothnessNode
+) 
+# from utils.nodes.visualization import VideoRendererNode
 
 logger = logging.getLogger(__name__)
+
+TOTAL_CORES = os.cpu_count() or 4
+CORES = max(1, TOTAL_CORES - 2)
 
 def run_pipeline_task(
     job_id: str, 
     video_path: str, 
     origin_zone: list,                 
     expected_projection_zone: list,    
-    h_matrix: list,                    
-    output_filename: str = "" # Guardamos en temp_videos
+    h_matrix: list,
+    percentile: float,
+    sigma: float,
+    esp: float,                
+    output_filename: str = "results.json"
 ):
     """
-    Servicio de ejecución en segundo plano con DEBUG EXTREMO.
-    Actualiza la DB paso a paso e imprime en consola cada movimiento.
+    Servicio de ejecución en segundo plano.
+    Actualiza el estado en la base de datos y guarda el JSON resultante al finalizar.
     """
-    print(f"\n{'='*60}")
-    print(f"🟢 INICIANDO JOB ID: {job_id}")
-    print(f"📂 Video a procesar: {video_path}")
-    print(f"{'='*60}\n")
+    logger.info(f"Iniciando procesamiento de pipeline para job {job_id} - {video_path}")
 
     try:
         Job.update_status(job_id, engine, status="Iniciando extracción...", progress=5)
         
         # --- Instanciamos los nodos ---
         extractor = EventExtractorNode(name="1_VideoExtractor", noise_threshold=8)
-        energy_filter = EnergyPercentileFilterNode(name="2_EnergyFilter", percentile=96.0)
-        clustering = DBSCANClusteringNode(name="3_SpatialClustering", eps=5.0)
-        grid_search = GridSearchNode(name="4_GridSearchOptimizer", cores=4)
+        energy_filter = EnergyPercentileFilterNode(name="2_EnergyFilter", percentile=percentile)
+        clustering = DBSCANClusteringNode(name="3_SpatialClustering", eps=esp)
+        grid_search = GridSearchNode(name="4_GridSearchOptimizer", cores=CORES)
         tracker = KalmanTrackerNode(name="5_KalmanTracker")
         cleaner = TrajectoryCleanerNode(name="6_TrajectoryCleaner")
         velocity_calc = TrajectoryVelocityNode(name="7_VelocityCalculator")
-        threshold_calc = GaussianThresholdNode(name="8_GaussianThreshold", sigma_multiplier=0.5)
+        threshold_calc = GaussianThresholdNode(name="8_GaussianThreshold", sigma_multiplier=sigma)
         rock_filter = HighVelocityFilterNode(name="9_HighVelocityFilter")
-        zizag_filter = ZigzagFilterNode(name="10_ZigzagFilter", max_tortuosity=1.25)
-        origin_filter = OriginZoneFilterNode(name="10_OriginZoneFilter")
-        #categorizer = TrajectoryCategorizationNode(name="11_TrajectoryCategorizer")
-        #render = VideoRendererNode(name="11_VideoRenderer", output_filename=output_filename)
-        categorizer = TrajectoryCategorizationNode(name="10_TrajectoryCategorizer")
-        smooth_filter = TrajectorySmoothnessNode(name="9.5_SmoothnessFilter")
-        bg_extractor = BackgroundExtractorNode(name="11_BackgroundExtractor", output_filename=output_filename)
+        categorizer = TrajectoryCategorizationNode(name="11_TrajectoryCategorizer")
+        tortuosity_calc = TortuosityCalculationNode(name="12_TortuosityCalculation")
+        origin_area_expansion = OriginAreaExpansionNode(name="13_OriginAreaExpansion")
+        smoothness_calc = TrajectorySmoothnessNode(name="14_TrajectorySmoothness")
+        # render = VideoRendererNode(name="14_VideoRenderer", output_filename=output_filename)
 
-        # Mapeamos los nodos con su mensaje de estado y % de progreso esperado al finalizar
         pipeline_steps = [
             (extractor, "Extrayendo eventos del video", 10),
             (energy_filter, "Filtrando energía (Percentil)", 15),
@@ -69,14 +74,13 @@ def run_pipeline_task(
             (velocity_calc, "Calculando cinemática", 65),
             (threshold_calc, "Calculando umbral gaussiano", 70),
             (rock_filter, "Filtrando por velocidad", 75),
-            (zizag_filter, "Filtrando trayectorias invalidas", 80),
-            (origin_filter, "Filtrando trayectorias fuera de zona de origen", 85),
-            (categorizer, "Categorizando trayectorias", 90),
-            (smooth_filter, "Calculando R2 de trayectorias", 95),
-            (bg_extractor, "Extrayendo frame de fondo", 98)
+            (categorizer, "Categorizando trayectorias", 80),
+            (tortuosity_calc, "Calculando tortuosidad", 85),
+            (origin_area_expansion, "Calculando expansión de área de origen", 90),
+            (smoothness_calc, "Calculando suavidad de trayectorias", 95),
+            # (render, "Renderizando video final", 98)
         ]
 
-        # Inyectamos todos los datos que vienen del frontend
         context: Dict[str, Any] = {
             "video_path": video_path,
             "origin_zone": origin_zone,
@@ -84,36 +88,31 @@ def run_pipeline_task(
             "h_matrix": h_matrix
         }
 
-        # Ejecución secuencial con DEBUG
+        # Ejecución secuencial
         for node, status_msg, progress_val in pipeline_steps:
-            print(f"\n{'='*50}")
-            print(f"🚀 INICIANDO NODO: {node.name}")
-            print(f"📝 Mensaje al front: {status_msg} ({progress_val}%)")
-            
-            # 1. Actualizamos BD antes de ejecutar el nodo
             Job.update_status(job_id, engine, status=status_msg, progress=progress_val)
             
-            # 2. Ejecutamos el nodo
             try:
                 context = node.run(context)
             except Exception as e:
-                print(f"❌ ERROR CRÍTICO DENTRO DEL NODO {node.name}: {str(e)}")
-                raise e # Lanzamos el error para que el except principal lo atrape
+                logger.error(f"Error crítico en el nodo {node.name}: {str(e)}")
+                raise e 
             
-            # 3. Verificamos si el nodo reportó un error en el diccionario context
             if "error" in context:
-                print(f"⚠️ EL NODO {node.name} DEVOLVIÓ UN ERROR EN EL CONTEXTO: {context['error']}")
-                raise Exception(context["error"])
-                
-            # 4. Avisamos que el nodo terminó con éxito
-            print(f"✅ NODO COMPLETADO EXITOSAMENTE: {node.name}")
-            print(f"{'='*50}\n")
+                raise Exception(f"El nodo {node.name} reportó un error: {context['error']}")
 
-        # Finalización exitosa
-        final_velocity = context.get('velocity_threshold', 0.0)
-        logger.info(f"Pipeline completado. Umbral: {final_velocity:.2f} px/f")
+        # Guardado del JSON resultante
         results = context.get('json_resultados', {})
-        print(f"🎉 PIPELINE COMPLETADO CON ÉXITO. Umbral calculado: {final_velocity:.2f}")
+        if output_filename and results:
+            output_path = Path("temp_videos") / output_filename
+            output_path.parent.mkdir(parents=True, exist_ok=True) 
+            
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(results, f, indent=4, ensure_ascii=False)
+
+        # Finalización
+        final_velocity = context.get('velocity_threshold', 0.0)
+        logger.info(f"Pipeline completado con éxito. Umbral: {final_velocity:.2f} px/f")
         
         Job.update_status(
             job_id, 
@@ -126,8 +125,7 @@ def run_pipeline_task(
         )
 
     except Exception as e:
-        print(f"\n🚨 ERROR FATAL EN EL PIPELINE: {str(e)}")
-        logger.error(f"Error en job {job_id}: {str(e)}")
+        logger.error(f"Error fatal en el pipeline para job {job_id}: {str(e)}")
         Job.update_status(
             job_id, 
             engine, 

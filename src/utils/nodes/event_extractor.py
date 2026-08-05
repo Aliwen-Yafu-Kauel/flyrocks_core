@@ -16,13 +16,13 @@ class EventExtractorNode(PipelineNode):
         noise_threshold: int = 8, 
         blur_kernel: Tuple[int, int] = (3, 3),
         fallback_video_path: Optional[str | Path] = None,
-        output_mask_filename: str = "mascara_cambios.png" # 1. NUEVO: Parámetro para el nombre
+        output_mask_filename: str = "mascara_cambios.png"
     ):
         super().__init__(name)
         self.noise_threshold = noise_threshold
         self.blur_kernel = blur_kernel
         self.fallback_video_path = Path(fallback_video_path) if fallback_video_path else None
-        self.output_mask_filename = output_mask_filename 
+        self.output_mask_filename = output_mask_filename
         self.tensor_raw: Optional[np.ndarray] = None
 
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -47,7 +47,7 @@ class EventExtractorNode(PipelineNode):
             ret, previous_frame = cap.read()
             if not ret: return context
 
-            # 2. NUEVO: Inicializar la máscara negra con las dimensiones del video
+            # Inicializar la máscara de acumulación
             height, width = previous_frame.shape[:2]
             max_change_mask = np.zeros((height, width), dtype=np.uint8)
 
@@ -64,9 +64,9 @@ class EventExtractorNode(PipelineNode):
                 
                 difference = cv2.absdiff(previous_gray, current_gray)
                 
-                # 3. NUEVO: Acumular el cambio máximo térmico (sin umbral) en cada iteración
+                # Guardar el valor máximo histórico
                 max_change_mask = cv2.max(max_change_mask, difference)
-                
+
                 ys, xs = np.nonzero(difference > self.noise_threshold)
                 
                 if ys.size > 0:
@@ -77,8 +77,8 @@ class EventExtractorNode(PipelineNode):
 
                 previous_gray = current_gray
                 frame_index += 1
-                
-            # 4. NUEVO: Guardar la máscara generada físicamente al terminar el bucle
+
+            # Guardar en disco y añadir al contexto
             mask_path = video_path.parent / self.output_mask_filename
             cv2.imwrite(str(mask_path), max_change_mask)
             context["change_mask_path"] = str(mask_path)
