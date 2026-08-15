@@ -9,7 +9,13 @@ from .base import PipelineNode
 logger = logging.getLogger(__name__)
 
 class EventExtractorNode(PipelineNode):
-    
+
+    # Fuera de la cache: su salida es el tensor crudo (~35 M eventos, del orden
+    # de 1 GB) y guardarlo no compensa. No se pierde nada: el nodo siguiente
+    # filtra ese tensor a ~1.4 M eventos y SU cache ya contiene todo lo que
+    # hace falta para seguir, asi que al reanudar este nodo ni se ejecuta.
+    cacheable = False
+
     def __init__(
         self, 
         name: str = "EventExtractor4D",

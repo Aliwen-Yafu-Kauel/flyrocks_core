@@ -13,3 +13,14 @@ data/
 *.html
 src/temp_videos/
 src/flyrocks.db
+
+# Residuos de correr el core desde la raiz del repo (antes de que los datos se
+# movieran a data/). Se quedan por compatibilidad con instalaciones viejas.
+/flyrocks.db
+/temp_videos/
+
+# El paquete de entrega ARMADO. Se regenera con entrega/armar_paquete.py, asi
+# que versionarlo seria guardar una copia de los tres servicios dentro de uno de
+# ellos. Lo que si se versiona es lo que lo define: el compose, el .bat y el
+# script, que estan en entrega/ y son cuatro archivos de texto.
+entrega/salida/

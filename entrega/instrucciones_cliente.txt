@@ -1,0 +1,16 @@
+Guía de Uso de DetoVision
+ 
+1. Instalar las dependencias (Docker) 
+Ve a la carpeta llamada dependencias. 
+Haz doble clic en el archivo ejecutable .exe que se encuentra allí. 
+Sigue las instrucciones que aparecen en pantalla para completar la instalación (puedes guiarte con el video adjunto llamado instalar dependencias). 
+ 
+2. Iniciar el proyecto
+Haz doble clic en el archivo detovision.bat.  
+Se abrirá una ventana de terminal mostrando un menú. Escribe la Opción 1 y presiona Enter. 
+El sistema comenzará a preparar el proyecto. Una vez que esté listo, tu navegador web se abrirá automáticamente para que puedas empezar a usar la aplicación. 
+ 
+3. Detener el proyecto 
+Cuando termines de trabajar, cierra la pestaña del navegador. 
+Vuelve a la ventana de terminal (la que se abrió en el paso anterior). 
+Escribe la Opción 2 en el menú y presiona Enter. Esto apagará la aplicación por completo y liberará los recursos.
