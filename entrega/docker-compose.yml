@@ -1,0 +1,83 @@
+# Detovision / FlyRocks — standalone
+#
+# ESTE es el compose canonico. Vive junto a los tres servicios (rutas planas),
+# que es como queda dentro del paquete que corre el cliente:
+#
+#     Detovision/
+#         detovision.bat
+#         mvp/                      <- este compose vive aca
+#             docker-compose.yml
+#             flyRocks_frontend/
+#             flyrocks_core/
+#             flyrocks_blast_detector/
+#
+# Y esa es exactamente la forma de `detovision_standalone/` en el workspace, asi
+# que el mismo archivo sirve para desarrollo y para entrega. Se arma con
+# `uv run python entrega/armar_paquete.py`.
+#
+# ---------------------------------------------------------------------------
+# Lo que este archivo tiene y el del paquete v3 no
+# ---------------------------------------------------------------------------
+#
+# 1. VOLUMENES. El `detovision.bat` corre `docker compose down` tanto al iniciar
+#    como al detener, y el arranque ademas usa `--build`. Sin volumenes eso
+#    borraba las dos SQLite y todos los archivos en cada sesion: el cliente
+#    empezaba de cero siempre. Los volumenes nombrados sobreviven a `down`
+#    (solo `down -v` los elimina, y el .bat no lo usa), asi que la persistencia
+#    funciona SIN tocar el script del cliente ni sus instrucciones.
+#
+# 2. RETENCION_HORAS. Antes eran 2 h fijas: lo que empezabas hoy no estaba
+#    mañana. Se sube o baja por entorno, sin tocar codigo.
+#
+# 3. El nombre real del blast detector. En el paquete v3 este servicio apunta a
+#    `./flyrocks`, que es como se llamaba la carpeta hasta esa version; hoy el
+#    repo se llama `flyrocks_blast_detector`.
+
+services:
+  konva-app:
+    build: ./flyRocks_frontend
+    ports:
+      - "3000:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - flyrocks-network
+
+  # El detector: pipeline de 13 nodos. VITE_URL_BACKEND_PROCESS del frontend.
+  flyrocks-core:
+    build: ./flyrocks_core
+    ports:
+      - "8009:8000"
+    environment:
+      # Techo de la cache por nodo. Cada configuracion distinta suma objetos y
+      # nadie los borra: sin techo, la carpeta crece sin limite en la maquina
+      # del cliente. Con 0 no se purga nunca.
+      CACHE_MAX_MB: "2048"
+    volumes:
+      - core_data:/app/data
+    networks:
+      - flyrocks-network
+
+  # Video: subida, deteccion de la detonacion, thumbnails y recorte.
+  # VITE_URL_BACKEND del frontend.
+  flyrocks-api:
+    build: ./flyrocks_blast_detector
+    ports:
+      - "8000:8000"
+    environment:
+      # Horas que se conservan videos y miniaturas. 24 h = lo que empiezas hoy
+      # sigue disponible mañana. Subirlo para iteraciones internas; bajarlo si
+      # el disco aprieta (los videos son de cientos de MB).
+      RETENCION_HORAS: "24"
+    volumes:
+      - blast_data:/app/data
+    networks:
+      - flyrocks-network
+
+volumes:
+  core_data:
+  blast_data:
+
+networks:
+  flyrocks-network:
+    driver: bridge

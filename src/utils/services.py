@@ -4,7 +4,13 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
-from utils.database import Job, engine
+from utils.database import Job, engine, DATA_DIR
+
+# Videos subidos y JSON de resultados: bajo DATA_DIR para que sobrevivan al
+# `docker compose down` que hace el script del cliente al iniciar y al detener.
+TEMP_VIDEOS = os.path.join(DATA_DIR, "temp_videos")
+
+from utils.nodes.base import ejecutar
 from utils.nodes.event_extractor import EventExtractorNode
 
 # NUEVO: Importamos el nodo de IA para el filtro de humo
@@ -97,23 +103,26 @@ def run_pipeline_task(
             "h_matrix": h_matrix
         }
 
-        # Ejecución secuencial
-        for node, status_msg, progress_val in pipeline_steps:
+        # Ejecución secuencial, reusando lo que ya esté calculado. El avance se
+        # reporta desde el callback: así los nodos que salen de caché no fingen
+        # estar procesando, y la barra salta directo al primero que sí corre.
+        def avisar(i, total, node):
+            _, status_msg, progress_val = pipeline_steps[i]
             Job.update_status(job_id, engine, status=status_msg, progress=progress_val)
-            
-            try:
-                context = node.run(context)
-            except Exception as e:
-                logger.error(f"Error crítico en el nodo {node.name}: {str(e)}")
-                raise e 
-            
-            if "error" in context:
-                raise Exception(f"El nodo {node.name} reportó un error: {context['error']}")
+
+        try:
+            context = ejecutar([n for n, _, _ in pipeline_steps], context, progreso=avisar)
+        except Exception as e:
+            logger.error(f"Error crítico en el pipeline: {str(e)}")
+            raise e
+
+        if "error" in context:
+            raise Exception(f"El pipeline reportó un error: {context['error']}")
 
         # Guardado del JSON resultante
         results = context.get('json_resultados', {})
         if output_filename and results:
-            output_path = Path("temp_videos") / output_filename
+            output_path = Path(TEMP_VIDEOS) / output_filename
             output_path.parent.mkdir(parents=True, exist_ok=True) 
             
             with open(output_path, "w", encoding="utf-8") as f:

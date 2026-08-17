@@ -5,7 +5,14 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src
+    PYTHONPATH=/app/src \
+    # Los wheels de OpenCV pesan ~70 MB cada uno (van dos: opencv-python y
+    # opencv-contrib-python). Con el timeout por defecto de uv (30 s) una
+    # conexion lenta corta la descarga a medias y el build falla entero con
+    # "I/O operation failed during extraction", que parece un error de disco.
+    # Importa porque el detovision.bat del cliente corre `up --build`: sin esto,
+    # un hipo de red en su oficina tumba el despliegue completo.
+    UV_HTTP_TIMEOUT=180
 
 # IMPORTANTE: Instalamos las dependencias del sistema.
 # Como tienes opencv-python en tu pyproject.toml, sin esto el contenedor fallaría.

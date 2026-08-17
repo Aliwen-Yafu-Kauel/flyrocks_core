@@ -47,6 +47,13 @@ class TrajectoryCategorizationNode(PipelineNode):
             puntos_lista = traj_array[:, 1:3].astype(int).flatten().tolist()
             if not puntos_lista: continue
 
+            # El tensor viene ordenado por (id, t) desde HighVelocityFilterNode,
+            # asi que la columna 3 es el frame de cada punto y va en ascendente.
+            # Se exporta junto a los puntos porque sin el eje temporal no se
+            # puede cruzar la trayectoria con los tiempos de la secuencia de
+            # detonacion (causalidad y tiempo de vuelo).
+            frames_lista = traj_array[:, 3].astype(int).tolist()
+
             first_x, first_y = float(traj_array[0, 1]), float(traj_array[0, 2])
             last_x, last_y = float(traj_array[-1, 1]), float(traj_array[-1, 2])
             
@@ -66,7 +73,8 @@ class TrajectoryCategorizationNode(PipelineNode):
             resultados_json[str(track_id)] = {
                 "clasificacion": categoria,
                 "distancia_m": round(distancia_m, 2),
-                "puntos": puntos_lista 
+                "puntos": puntos_lista,
+                "frames": frames_lista
             }
 
         context["json_resultados"] = resultados_json

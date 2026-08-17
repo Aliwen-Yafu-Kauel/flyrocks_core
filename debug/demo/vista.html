@@ -1,0 +1,2972 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flyrocks — Vista de resultados</title>
+<style>
+  :root{
+    --bg:#12141a; --panel:#1b1e26; --line:#2c313d; --txt:#e6e9ef;
+    --dim:#8d95a6; --acc:#4da3ff;
+    --peligro:#ff4d4d; --proy:#ffb82b; --fuera:#c77dff;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--txt); overflow:hidden;
+    font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+    display:flex; flex-direction:column;
+  }
+
+  header{
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:9px 14px; background:var(--panel);
+    border-bottom:1px solid var(--line); flex:0 0 auto;
+  }
+  .marca{font-weight:650; letter-spacing:.2px}
+  .marca span{color:var(--acc)}
+  .sep{width:1px; height:22px; background:var(--line)}
+  .grupo{display:flex; align-items:center; gap:7px}
+  .grupo > label{color:var(--dim); font-size:12px}
+
+  button{
+    background:#262b36; color:var(--txt); border:1px solid var(--line);
+    border-radius:6px; padding:6px 11px; font:inherit; cursor:pointer;
+  }
+  button:hover{background:#2f3542; border-color:#3d4553}
+  button:active{transform:translateY(1px)}
+  button.pri{background:var(--acc); border-color:var(--acc); color:#08121e; font-weight:600}
+  button.pri:hover{background:#6ab3ff}
+  button.on{background:#24405e; border-color:#3d6d9e; color:#cfe6ff}
+  button.peligro{background:#5e2424; border-color:#9e3d3d; color:#ffd6d6}
+  button:disabled{opacity:.35; cursor:not-allowed; transform:none}
+  button.mini{padding:3px 8px; font-size:12px}
+  button.ent{width:100%; text-align:left; font-size:12.5px}
+
+  input[type=range]{width:118px; accent-color:var(--acc)}
+  .val{color:var(--dim); font-variant-numeric:tabular-nums; min-width:44px; text-align:right}
+  .chk{display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none}
+  select{
+    background:#262b36; color:var(--txt); border:1px solid var(--line);
+    border-radius:6px; padding:5px 8px; font:inherit;
+  }
+
+  /* ---------- barra de asociación (solo con la capa activa) ---------- */
+  #barraAsoc{
+    display:none; align-items:center; gap:16px; flex-wrap:wrap;
+    padding:7px 14px; background:#171a21;
+    border-bottom:1px solid var(--line); flex:0 0 auto;
+  }
+  body.asociando #barraAsoc{display:flex}
+  #barraAsoc .aviso{color:var(--dim); font-size:12px}
+  #barraAsoc b{color:#7bd88f}
+
+  /* nivel de respuesta: pozo / grupo / sector */
+  .nivel{
+    display:inline-block; padding:1px 7px; border-radius:4px;
+    font-size:11px; font-weight:600; letter-spacing:.3px;
+  }
+  .nivel.pozo{background:#1e4d2b; color:#7bd88f}
+  .nivel.grupo{background:#4d4318; color:#ffd23b}
+  .nivel.sector{background:#4a2a2a; color:#ff9d9d}
+  .cand{
+    display:flex; align-items:center; gap:8px; padding:3px 0;
+    font-variant-numeric:tabular-nums;
+  }
+  .cand .barra{
+    flex:1 1 auto; height:6px; border-radius:3px; background:#232833; overflow:hidden;
+  }
+  .cand .barra i{display:block; height:100%; background:var(--acc)}
+  .cand .id{width:34px; color:var(--txt); font-weight:600}
+  .cand .pc{width:36px; text-align:right; color:var(--dim)}
+  .aviso-flojo{
+    color:#ffb82b; font-size:11px; margin-top:8px; line-height:1.45;
+  }
+
+  /* ---------- cuerpo: lienzo + panel ---------- */
+  #cuerpo{flex:1 1 auto; display:flex; min-height:0}
+  #lienzo{position:relative; flex:1 1 auto; overflow:hidden; min-width:0}
+  canvas{display:block; position:absolute; top:0; left:0}
+  #cz{cursor:crosshair}
+  body.paneando #cz{cursor:grabbing}
+  body.dibujando #cz{cursor:cell}
+  body.lazando #cz{cursor:crosshair}
+  body.uniendo #cz{cursor:alias}
+
+  aside{
+    width:290px; flex:0 0 auto; background:var(--panel);
+    border-left:1px solid var(--line); overflow-y:auto;
+    display:flex; flex-direction:column;
+  }
+  aside section{padding:12px 14px; border-bottom:1px solid var(--line)}
+  aside h3{
+    font-size:11px; text-transform:uppercase; letter-spacing:.6px;
+    color:var(--dim); font-weight:600; margin-bottom:10px;
+  }
+  .fila{display:flex; align-items:center; gap:8px; margin-bottom:8px}
+  .fila:last-child{margin-bottom:0}
+  .fila > .et{flex:1 1 auto; color:var(--dim); font-size:12px}
+
+  /* contadores */
+  .cuenta{
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:5px 0; border-bottom:1px solid #232833;
+  }
+  .cuenta:last-child{border-bottom:none}
+  .cuenta .n{font-variant-numeric:tabular-nums; font-weight:600}
+  .punto{width:9px; height:9px; border-radius:2px; flex:0 0 auto}
+  .cuenta .lbl{display:flex; align-items:center; gap:7px; color:var(--dim); font-size:12px}
+  .cuenta.total{margin-top:4px; padding-top:8px; border-top:1px solid var(--line)}
+  .cuenta.total .lbl{color:var(--txt)}
+
+  /* por que no se ve algo: el desglose de razones */
+  #razones{margin-top:8px; font-size:12px}
+  #razones div{
+    display:flex; justify-content:space-between; color:var(--dim);
+    padding:2px 0; font-variant-numeric:tabular-nums;
+  }
+  #razones .cero{opacity:.35}
+
+  #detalle{font-size:12px}
+  #detalle .par{display:flex; justify-content:space-between; padding:3px 0; color:var(--dim)}
+  #detalle .par b{color:var(--txt); font-weight:600; font-variant-numeric:tabular-nums}
+  #detalle .vacio{color:var(--dim); font-style:italic}
+
+  #suelta{
+    position:absolute; inset:0; display:flex; align-items:center;
+    justify-content:center; text-align:center; padding:24px;
+  }
+  #suelta .caja{
+    border:2px dashed #39414f; border-radius:14px; padding:34px 48px;
+    background:rgba(27,30,38,.55); max-width:460px;
+  }
+  #suelta h2{font-size:17px; font-weight:600; margin-bottom:8px}
+  #suelta p{color:var(--dim); margin-bottom:6px}
+  #suelta code{
+    background:#262b36; border:1px solid var(--line); border-radius:4px;
+    padding:1px 6px; font-size:12px;
+  }
+  body.cargada #suelta{display:none}
+
+  footer{
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    padding:6px 14px; background:var(--panel);
+    border-top:1px solid var(--line); color:var(--dim);
+    font-size:12px; font-variant-numeric:tabular-nums; flex:0 0 auto;
+  }
+  footer b{color:var(--txt); font-weight:600}
+  kbd{
+    background:#262b36; border:1px solid var(--line); border-bottom-width:2px;
+    border-radius:4px; padding:1px 5px; font:inherit; font-size:11px; color:var(--txt);
+  }
+  #ayuda{margin-left:auto; display:flex; gap:12px; align-items:center}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="marca">Flyrocks <span>·</span> Vista de resultados</div>
+  <div class="sep"></div>
+
+  <div class="grupo">
+    <label>Fondo</label>
+    <select id="selFondo">
+      <option value="mascara">Máscara de cambios</option>
+      <option value="frame">Frame pre-tronadura</option>
+      <option value="ninguno">Ninguno</option>
+    </select>
+  </div>
+
+  <div class="grupo">
+    <label>Opacidad</label>
+    <input type="range" id="opFondo" min="0" max="1" step="0.05" value="0.75">
+    <span class="val" id="vOpFondo">.75</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="grupo">
+    <button id="btnMalla">Malla</button>
+    <button id="btnZonas">Zonas</button>
+    <button id="btnEscape" title="Isolíneas de escape relativo, en diámetros de voladura">Escape</button>
+    <button id="btnDibujar">Dibujar trayectoria</button>
+    <button id="btnLazo" title="Rodea trayectorias para descartarlas en masa (L). Por defecto solo agarra las que quedan ENTERAS dentro; con Alt agarra las que apenas tocan. Con Shift restaura en vez de descartar.">Lazo</button>
+    <button id="btnUnir" title="Une dos trayectorias partidas por sus extremos (U). Selecciona una, activa Unir y haz clic en la otra.">Unir</button>
+  </div>
+
+  <div class="sep"></div>
+  <div class="grupo">
+    <button id="btnAsociar" class="pri">Asociar al pozo</button>
+  </div>
+
+  <div class="sep"></div>
+  <div class="grupo">
+    <button id="btnAjustar" class="mini">Ajustar vista</button>
+  </div>
+</header>
+
+<div id="barraAsoc">
+  <span class="aviso">Asociación geométrica — arrastra el <b>nadir</b> (cruz verde) si no está bajo la cámara</span>
+  <div class="grupo">
+    <label>Paralaje k</label>
+    <input type="range" id="fK" min="0" max="0.25" step="0.005" value="0">
+    <span class="val" id="vK">0.00</span>
+  </div>
+  <div class="grupo">
+    <label>Apertura σ</label>
+    <input type="range" id="fSig" min="1" max="20" step="0.5" value="4">
+    <span class="val" id="vSig">4°</span>
+  </div>
+  <div class="grupo">
+    <label class="chk"><input type="checkbox" id="chkTodos"> Ver todos los empalmes</label>
+  </div>
+  <div class="grupo">
+    <button class="mini" id="btnNadirCentro">Nadir al centro</button>
+  </div>
+
+  <div class="sep"></div>
+  <div class="grupo" id="grupoTemporal">
+    <label class="chk" title="Cruza el nacimiento de la traza con el tiempo de detonación de cada pozo">
+      <input type="checkbox" id="chkTemporal"> <b style="color:#4da3ff">Calce temporal</b></label>
+    <label>retardo ≤</label>
+    <input type="range" id="fRet" min="0" max="90" step="1" value="12">
+    <span class="val" id="vRet">12f</span>
+    <label>causalidad ±</label>
+    <input type="range" id="fTol" min="0" max="20" step="1" value="3">
+    <span class="val" id="vTol">3f</span>
+    <label title="Frame del clip en que revienta el PRIMER tiro. El CSV da tiempos relativos entre pozos, no dónde arranca la secuencia dentro del video: este es el ancla que las une. Un caso congelado ya lo trae medido; un análisis del core empieza en 0 y hay que ajustarlo mirando el destello.">1ª detonación</label>
+    <input type="range" id="fAncla" min="0" max="300" step="1" value="0">
+    <span class="val" id="vAncla">0f</span>
+  </div>
+</div>
+
+<div id="cuerpo">
+  <div id="lienzo">
+    <canvas id="cf"></canvas>
+    <canvas id="cz"></canvas>
+    <div id="suelta"><div class="caja">
+      <h2>No se pudo cargar el caso</h2>
+      <p>Esta vista necesita servidor: con <code>file://</code> el navegador bloquea la carga.</p>
+      <p>Levántalo con <code>uv run python debug/caso_serve.py</code></p>
+    </div></div>
+  </div>
+
+  <aside>
+    <section>
+      <h3>Trayectorias</h3>
+      <div id="cuentas"></div>
+      <div id="razones"></div>
+    </section>
+
+    <section>
+      <h3>Filtros</h3>
+      <div class="fila" title="Cuánto serpentea el trazo. El control va invertido para que, como los demás, filtre al moverlo a la derecha.">
+        <span class="et">Tortuosidad ≤</span>
+        <input type="range" id="fTor"><span class="val" id="vTor">—</span>
+      </div>
+      <div class="fila">
+        <span class="et">Escape relativo ≥</span>
+        <input type="range" id="fEsc"><span class="val" id="vEsc">—</span>
+      </div>
+      <div class="fila" title="Escala logarítmica en la distancia a 1: el recorrido se reparte entre 0.9, 0.99 y 0.999, que es donde están los datos.">
+        <span class="et">R² ≥ <span style="opacity:.55">(log)</span></span>
+        <input type="range" id="fR2"><span class="val" id="vR2">—</span>
+      </div>
+      <div class="fila">
+        <span class="et">Largo mínimo (puntos)</span>
+        <input type="range" id="fLen"><span class="val" id="vLen">—</span>
+      </div>
+      <div class="fila" style="margin-top:10px">
+        <button class="mini" id="btnReset">Restablecer filtros</button>
+      </div>
+    </section>
+
+    <section>
+      <h3>Clases</h3>
+      <label class="chk"><input type="checkbox" id="cPel" checked>
+        <span class="punto" style="background:var(--peligro)"></span> Proyección peligrosa</label>
+      <label class="chk" style="margin-top:6px"><input type="checkbox" id="cPro" checked>
+        <span class="punto" style="background:var(--proy)"></span> Proyección</label>
+      <label class="chk" style="margin-top:6px"><input type="checkbox" id="cFue" checked>
+        <span class="punto" style="background:var(--fuera)"></span> Fuera de vista</label>
+    </section>
+
+    <section>
+      <h3>Descartadas</h3>
+      <label class="chk"><input type="checkbox" id="verDesc" checked> Mostrarlas atenuadas</label>
+      <div class="fila" style="margin-top:9px">
+        <span class="et">Opacidad</span>
+        <input type="range" id="opDesc" min="0" max="1" step="0.05" value="0.22">
+        <span class="val" id="vOpDesc">.22</span>
+      </div>
+      <div class="fila">
+        <button class="mini" id="btnRestaurar">Restaurar todas</button>
+      </div>
+    </section>
+
+    <section id="secAsoc" style="display:none">
+      <h3>Asociación</h3>
+      <div id="resAsoc"></div>
+    </section>
+
+    <section style="flex:1 1 auto">
+      <h3>Selección</h3>
+      <div id="detalle"><div class="vacio">Haz clic en una trayectoria.</div></div>
+    </section>
+
+    <section>
+      <h3>Entregables</h3>
+      <div class="fila"><button class="pri ent" id="btnEntregable">1 · JSON de trayectorias</button></div>
+      <div class="fila"><button class="ent" id="btnImgFondo">2 · Fondo (intensidad)</button></div>
+      <div class="fila"><button class="ent" id="btnImgTrazos">3 · Fondo + trayectorias</button></div>
+      <div class="fila"><button class="ent" id="btnImgOrigen">4 · + empalmes al tiro</button></div>
+      <div class="fila"><button class="ent" id="btnHeatmap">5 · Heatmap de tiros</button></div>
+      <div class="fila"><button class="ent" id="btnHisto">6 · Histograma de alcances</button></div>
+      <div class="fila" style="margin-top:10px">
+        <button class="pri ent" id="btnTodo">Descargar los 6</button>
+      </div>
+      <div style="color:var(--dim);font-size:11px;margin-top:9px;line-height:1.5">
+        Las imágenes salen a 3840×2160. El PDF que junta todo se arma aparte con
+        <code style="font-size:10px">salidas.py</code>.
+      </div>
+    </section>
+
+    <section>
+      <h3>Sesión</h3>
+      <div class="fila">
+        <button class="mini" id="btnGuardar" style="flex:1">Guardar avance</button>
+        <button class="mini" id="btnCargar" style="flex:1">Cargar</button>
+      </div>
+      <input type="file" id="fileCaso" accept=".json" style="display:none">
+      <div style="color:var(--dim);font-size:11px;margin-top:8px;line-height:1.5">
+        Guarda tus filtros, descartes y trazos dibujados para retomar después.
+        No es un entregable.
+      </div>
+    </section>
+  </aside>
+</div>
+
+<footer>
+  <span id="pie">Cargando…</span>
+  <span id="ayuda">
+    <span><kbd>rueda</kbd> zoom</span>
+    <span><kbd>arrastrar</kbd> mover</span>
+    <span><kbd>Supr</kbd> descartar</span>
+    <span><kbd>D</kbd> dibujar</span>
+    <span><kbd>C</kbd> 2º manejador</span>
+  </span>
+</footer>
+
+<script>
+"use strict";
+
+// ===========================================================================
+//  Estado
+// ===========================================================================
+
+// El caso congelado, tal cual lo dejo caso_export.py. Nunca se muta la data
+// cruda: los filtros solo escriben `estado`/`razon`, que son derivados.
+let C = null;
+
+const IMG = { mascara: null, frame: null };
+
+// Vista: escala y traslacion de imagen -> pantalla.
+const V = { z: 1, x: 0, y: 0, w: 0, h: 0 };
+
+// Filtros. Los rangos NO son fijos: se derivan de los datos del caso al
+// cargar. Con los rangos que trae el front (tortuosidad 0-5) el 75% de las
+// trayectorias cae en el primer 4% del recorrido y el slider no hace nada.
+const F = {
+  tor: 0, esc: 0, r2: 0, len: 0,
+  clases: { "Proyección peligrosa": true, "Proyección": true, "Fuera de vista": true },
+  verDesc: true, opDesc: 0.22,
+};
+
+const U = {
+  fondo: "mascara", opFondo: 0.75,
+  malla: false, zonas: false, escape: false,
+  sel: -1, dibujando: false, lazo: false, uniendo: false,
+};
+
+// Lazo de descarte en masa. `pts` va en coordenadas de IMAGEN, no de pantalla:
+// si el usuario hace zoom o desplaza a mitad del trazo, el lazo sigue rodeando
+// lo mismo. `n` es el conteo en vivo, para que se vea a cuántas va a agarrar
+// ANTES de soltar.
+const LAZO = { pts: [], n: 0, tocar: false, restaurar: false };
+
+// Trazo en construccion: p0 -> p2 -> se curva moviendo el control.
+let NUEVO = null;
+
+const COLOR = {
+  "Proyección peligrosa": "#ff4d4d",
+  "Proyección": "#ffb82b",
+  "Fuera de vista": "#c77dff",
+};
+
+const cf = document.getElementById("cf"), gf = cf.getContext("2d");
+const cz = document.getElementById("cz");
+// `gz` no es const porque la exportación a 4K lo desvía a un canvas offscreen
+// para reusar las mismas funciones de dibujo (ver exportarImagen).
+let gz = cz.getContext("2d");
+const lienzo = document.getElementById("lienzo");
+const $ = (id) => document.getElementById(id);
+
+// ===========================================================================
+//  Carga
+// ===========================================================================
+
+// La vista tiene DOS fuentes y el mismo comportamiento con las dos:
+//
+//   ?caso=3160-789        un caso congelado en disco (para iterar sin backend)
+//   ?job=<id>&api=<url>   un análisis del core, por su job_id
+//
+// La segunda es la que permite montar esta pantalla como último paso del
+// wizard: recibe un job_id y se arma sola. La primera se queda porque es la
+// que hace barato iterar — no depende de que haya nada corriendo.
+async function cargar(){
+  const params = new URLSearchParams(location.search);
+  const job = params.get("job");
+  if (job){
+    await cargarDesdeCore(params.get("api") || "http://localhost:8009", job);
+  } else {
+    await cargarDesdeArchivo(params.get("caso") || "3160-789");
+  }
+
+  prepararTrayectorias();
+  derivarRangos();
+  A.nadir = { x: C.calibra.nadir[0], y: C.calibra.nadir[1] };
+  A.k = C.calibra.k ?? 0;
+  A.sigma = C.calibra.sigma_grados ?? 4;
+  $("fK").value = A.k;      $("vK").textContent = A.k.toFixed(2);
+  $("fSig").value = A.sigma; $("vSig").textContent = A.sigma + "°";
+
+  // El ancla temporal: en qué frame del clip revienta el primer tiro. Viene
+  // medida en un caso congelado, y en un análisis del core sale de los dos
+  // frames del paso 2 que ahora manda el wizard (detonación detectada menos
+  // inicio del corte). Solo cae a 0 si el job no los trae.
+  const ancla = C.meta.frame_detonacion ?? C.malla.meta.frame_inicio ?? 0;
+  C.meta.frame_detonacion = ancla;
+  // Un ancla mayor que el tope del control lo dejaría clavado en 300 mientras
+  // el valor real es otro: el control mentiría sobre el estado de la vista.
+  if (ancla > +$("fAncla").max) $("fAncla").max = ancla;
+  $("fAncla").value = ancla; $("vAncla").textContent = ancla + "f";
+
+  // Un caso viejo (exportado antes de rescatar el eje temporal del pipeline)
+  // no trae `frames`. La capa temporal se ofrece solo si hay con qué.
+  A.hayTiempo = C.proyecciones.some(t => t.t_ini != null);
+  A.temporal = A.hayTiempo;
+  $("chkTemporal").checked = A.temporal;
+  $("chkTemporal").disabled = !A.hayTiempo;
+  $("grupoTemporal").style.opacity = A.hayTiempo ? 1 : 0.4;
+  if (!A.hayTiempo)
+    $("chkTemporal").parentElement.title = "Este caso no trae eje temporal: vuelve a exportarlo";
+  document.body.classList.add("cargada");
+  ajustarVista();
+  recalcular();
+}
+
+async function cargarDesdeArchivo(caso){
+  const base = `../casos/${caso}/`;
+  const r = await fetch(base + "caso.json");
+  if (!r.ok) throw new Error(`no se pudo leer ${base}caso.json (${r.status})`);
+  C = await r.json();
+  // Las imagenes son grandes (mascara 3.5 MB, frame 12 MB). Se cargan en
+  // paralelo y la vista arranca apenas llega la primera.
+  IMG.mascara = await cargarImg(base + "mascara.png");
+  cargarImg(base + "frame.png").then(im => { IMG.frame = im; });
+}
+
+// Arma el caso a partir de lo que el core guarda de un análisis.
+async function cargarDesdeCore(api, job){
+  api = api.replace(/\/$/, "");
+  const r = await fetch(`${api}/api/results/${job}`);
+  if (!r.ok) throw new Error(`el core no conoce el job ${job} (${r.status})`);
+  const J = await r.json();
+  if (J.is_running)
+    throw new Error(`el análisis todavía está corriendo (${J.status})`);
+  const E = J.entrada || {};
+  if (!E.h_matrix)
+    throw new Error("este job es anterior al guardado de la calibración: "
+                  + "vuelve a correr el análisis");
+
+  // El tamaño del cuadro no viaja en la respuesta; se toma de la máscara, que
+  // es del mismo tamaño que el video.
+  IMG.mascara = await cargarImg(`${api}/temp_videos/mascara_cambios.png`);
+  const W = IMG.mascara ? IMG.mascara.naturalWidth : 3840;
+  const H = IMG.mascara ? IMG.mascara.naturalHeight : 2160;
+
+  // origin_zone llega aplanado dentro de una lista ([[x,y,x,y,…]]) y la zona
+  // de seguridad como pares. Son formatos distintos porque cada nodo del core
+  // los espera así; acá se normalizan a pares.
+  const aPares = (z) => {
+    if (!z || !z.length) return [];
+    const p = z[0];
+    return (Array.isArray(p) && p.length === 2 && z.every(q => q.length === 2))
+      ? z.map(q => [+q[0], +q[1]])
+      : Array.from({ length: Math.floor(p.length / 2) }, (_, i) => [+p[2*i], +p[2*i+1]]);
+  };
+  const origen = aPares(E.origin_zone);
+  const seguridad = aPares(E.expected_projection_zone);
+
+  const h3 = aH3(E.h_matrix);
+  if (!h3) throw new Error("la homografía del job no tiene 9 números válidos");
+  const escala = escalaDeH(h3);
+  const areaM2 = areaPoly(origen) / (escala * escala);
+  const diam = 2 * Math.sqrt(Math.max(areaM2, 1) / Math.PI);
+
+  // La malla la proyecta el core a partir del CSV de secuencia que sube el
+  // wizard. Si el usuario no lo cargó (es opcional), el job llega sin malla: la
+  // vista sirve igual para filtrar, descartar y dibujar, y la asociación se
+  // avisa como no disponible en vez de fallar.
+  const fps = (E.malla && E.malla.meta.fps) || 29.97;
+
+  // El ancla temporal: en qué frame del CLIP revienta el primer tiro. El CSV da
+  // tiempos RELATIVOS entre pozos, así que sin este origen no hay calce temporal.
+  //
+  // Si el wizard mandó los dos frames del paso 2, el core ya hizo la resta y el
+  // control arranca en el valor correcto: pasa de ser una adivinanza a una
+  // corrección fina. Si no vinieron (un wizard viejo, o un job de antes de este
+  // cambio), se cae a 0 y el usuario lo busca a ojo, como antes.
+  const ancla = E.recorte?.ancla_frames ?? E.malla?.meta?.frame_inicio ?? 0;
+  if (E.recorte) {
+    console.info(`[ancla] ${E.recorte.frame_detonacion} - `
+      + `${E.recorte.frame_inicio_corte} = ${ancla} frames (del job)`);
+  }
+
+  const malla = (E.malla && E.malla.pozos && E.malla.pozos.length)
+    ? { meta: { ...E.malla.meta, frame_inicio: ancla, fps },
+        pozos: E.malla.pozos }
+    : { meta: { t_min: 0, t_max: 1, frame_inicio: 0, fps,
+                A: [[1, 0], [0, 1]], t: [0, 0] }, pozos: [] };
+  if (E.malla_error) console.warn("[malla] el core no pudo leer el CSV:", E.malla_error);
+
+  C = {
+    meta: { nombre: `job ${job.slice(0, 8)}`, video: E.video || "—",
+            ancho: W, alto: H, fps, frame_detonacion: ancla,
+            generado: new Date().toISOString().slice(0, 16).replace("T", " ") },
+    calibra: { h_matrix: h3, rms_px: null,
+               escala_px_por_m: +escala.toFixed(4),
+               nadir: [W / 2, H / 2], k: 0, sigma_grados: 4 },
+    zonas: { origen, seguridad, origen_mundo: null,
+             diametro_equiv_m: +diam.toFixed(2),
+             seguridad_m: separacionMedia(origen, seguridad) / escala },
+    malla,
+    proyecciones: normalizarDelCore(J.json_data || {}),
+    vista: {},
+  };
+}
+
+// Área de un polígono por la fórmula del cordón (shoelace), en las unidades del
+// polígono al cuadrado. Se toma el valor absoluto porque el signo solo dice si
+// los vértices vienen en sentido horario o antihorario, y acá llegan de las dos
+// formas: la zona de origen la dibuja el usuario y la de seguridad sale de un
+// offset sobre el hull.
+function areaPoly(pts){
+  if (!pts || pts.length < 3) return 0;
+  let s = 0;
+  for (let i = 0, n = pts.length; i < n; i++){
+    const a = pts[i], b = pts[(i + 1) % n];
+    s += a[0] * b[1] - b[0] * a[1];
+  }
+  return Math.abs(s) / 2;
+}
+
+// La homografía llega en dos formas según quién armó el job: anidada 3x3, o
+// aplanada dentro de una lista ([[9 números]]) porque el wizard la manda con un
+// `toString()`. El core la reordena con un reshape(3,3); acá se hace lo mismo,
+// o `escalaDeH` devuelve NaN en silencio y la escala termina valiendo 1 px/m.
+function aH3(h){
+  if (!h) return null;
+  const v = h.flat(Infinity).map(Number);
+  if (v.length !== 9 || v.some(x => !isFinite(x))) return null;
+  return [v.slice(0, 3), v.slice(3, 6), v.slice(6, 9)];
+}
+
+// px/m de la homografía metros->píxeles: raíz del |det| del bloque lineal.
+function escalaDeH(h){
+  const a = h[0][0]*h[1][1] - h[0][1]*h[1][0];
+  const s = Math.sqrt(Math.abs(a));
+  return isFinite(s) && s > 1e-6 ? s : 1;
+}
+
+// Distancia media entre dos contornos concéntricos: sirve para deducir con qué
+// radio se generó la zona de seguridad, que el core no guarda como número.
+function separacionMedia(a, b){
+  if (!a.length || !b.length) return 100;
+  const d = b.map(p => Math.min(...a.map(q => Math.hypot(p[0]-q[0], p[1]-q[1]))));
+  d.sort((x, y) => x - y);
+  return d[Math.floor(d.length / 2)] || 100;
+}
+
+// El core entrega un dict indexado por track_id; la vista trabaja con una
+// lista y con el modelo de estado. Es la misma normalización que hace
+// caso_export.py, para que las dos fuentes queden idénticas.
+function normalizarDelCore(crudo){
+  return Object.entries(crudo).map(([id, d]) => {
+    const fr = d.frames || null;
+    return {
+      id: String(id), fuente: "pipeline",
+      puntos: d.puntos || [],
+      frames: fr,
+      t_ini: fr && fr.length ? fr[0] : null,
+      t_fin: fr && fr.length ? fr[fr.length - 1] : null,
+      clasificacion: d.clasificacion,
+      distancia_m: d.distancia_m,
+      tortuosidad: d.tortuosidad,
+      escape_relativo: d.escape_relativo,
+      r2_score: d.r2_score,
+      estado: "activa", razon: null, asociacion: null,
+    };
+  }).filter(t => t.puntos.length >= 2);
+}
+
+function cargarImg(url){
+  // Cuando la vista y el core están en puertos distintos —que es el caso normal
+  // en el standalone: nginx sirve esto en :3000 y la máscara viene del core en
+  // :8009— dibujar la imagen CONTAMINA el canvas, y `toBlob()` pasa a lanzar
+  // SecurityError. O sea: se ve todo bien en pantalla y los botones de
+  // entregables dejan de funcionar sin decir por qué.
+  //
+  // Pedirla con crossOrigin lo evita, siempre que el servidor mande
+  // Access-Control-Allow-Origin (el core lo hace: CORSMiddleware con "*").
+  // Si no las manda, pedirla así falla del todo, y ahí preferimos verla y
+  // perder la exportación antes que quedarnos sin fondo.
+  let otroOrigen = false;
+  try { otroOrigen = new URL(url, location.href).origin !== location.origin; }
+  catch (_) { otroOrigen = false; }
+
+  return new Promise((res) => {
+    const intentar = (conCors) => {
+      const im = new Image();
+      if (conCors) im.crossOrigin = "anonymous";
+      im.onload = () => res(im);
+      im.onerror = () => conCors ? intentar(false) : res(null);
+      im.src = url;
+    };
+    intentar(otroOrigen);
+  });
+}
+
+// Precalculo por trayectoria lo que la vista consulta en cada redibujo, para
+// no recorrer 15.772 puntos por frame de pan.
+function prepararTrayectorias(){
+  for (const T of C.proyecciones) preparar(T);
+}
+
+// Rasteriza la curva manual a la MISMA forma que traen las del pipeline (lista
+// plana de puntos). Asi el hit-test, el guardado y cualquier consumidor de
+// `puntos` funcionan igual sin importar de donde salio la trayectoria.
+function rasterizar(T){
+  const B = T.bezier;
+  if (!B) return;
+  const pts = [], N = 48;
+  for (let i = 0; i <= N; i++){
+    const t = i / N, u = 1 - t;
+    if (B.c2){
+      pts.push(u*u*u*B.p0.x + 3*u*u*t*B.c1.x + 3*u*t*t*B.c2.x + t*t*t*B.p2.x,
+               u*u*u*B.p0.y + 3*u*u*t*B.c1.y + 3*u*t*t*B.c2.y + t*t*t*B.p2.y);
+    } else {
+      pts.push(u*u*B.p0.x + 2*u*t*B.c1.x + t*t*B.p2.x,
+               u*u*B.p0.y + 2*u*t*B.c1.y + t*t*B.p2.y);
+    }
+  }
+  T.puntos = pts;
+  const esc = C.calibra.escala_px_por_m || 1;
+  T.distancia_m = +(Math.hypot(B.p2.x - B.p0.x, B.p2.y - B.p0.y) / esc).toFixed(2);
+}
+
+function preparar(T){
+  const p = T.puntos;
+  T.n = p.length >> 1;
+  T.p0 = { x: p[0], y: p[1] };
+  T.pf = { x: p[p.length - 2], y: p[p.length - 1] };
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < p.length; i += 2){
+    if (p[i] < x0) x0 = p[i];
+    if (p[i] > x1) x1 = p[i];
+    if (p[i+1] < y0) y0 = p[i+1];
+    if (p[i+1] > y1) y1 = p[i+1];
+  }
+  T.bb = { x0, y0, x1, y1 };
+  if (T.estado === undefined) T.estado = "activa";
+  if (T.razon === undefined) T.razon = null;
+}
+
+// Los rangos de los sliders salen de los datos, no de constantes. Ademas TODOS
+// arrancan en el extremo permisivo (se ven todas) y aprietan hacia la derecha:
+// que un control filtre al subir y otro al bajar obliga a recordar cual es cual.
+//
+// Dos llevan escala propia porque la lineal no sirve para sus datos:
+//   tortuosidad  el filtro es `<=`, asi que el control va INVERTIDO
+//                (umbral = max - control) para apretar hacia la derecha igual
+//                que el resto.
+//   R2           casi todo el peso esta sobre 0.9 (mediana 0.96), asi que el
+//                control es logaritmico en la DISTANCIA A 1: r2 = 1 - 10^-s.
+//                s=1 -> 0.9, s=2 -> 0.99, s=3 -> 0.999. Da finura donde hay
+//                datos en vez de gastar el recorrido en un rango vacio.
+let TOR_MAX = 1;
+
+function derivarRangos(){
+  const P = C.proyecciones;
+  const rango = (f) => {
+    const v = P.map(f).filter(x => x !== null && x !== undefined && isFinite(x));
+    return v.length ? [Math.min(...v), Math.max(...v)] : [0, 1];
+  };
+
+  const [torLo, torHi] = rango(t => t.tortuosidad);
+  TOR_MAX = torHi;
+  const elT = $("fTor");
+  elT.min = 0; elT.max = +(torHi - torLo).toFixed(3); elT.step = 0.001;
+  elT.value = 0;                       // control a la izquierda = ver todas
+  F.tor = torHi;
+  $("vTor").textContent = fmt(F.tor);
+
+  const elR = $("fR2");
+  elR.min = 0; elR.max = 3; elR.step = 0.02;
+  elR.value = 0;
+  F.r2 = 0;
+  $("vR2").textContent = "0";
+
+  const cfgs = [
+    ["fEsc", "vEsc", rango(t => t.escape_relativo), "esc", 0.01],
+    ["fLen", "vLen", rango(t => t.n), "len", 1],
+  ];
+  for (const [idIn, idVal, [lo, hi], clave, paso] of cfgs){
+    const el = $(idIn);
+    el.min = lo; el.max = hi; el.step = paso;
+    F[clave] = lo;
+    el.value = lo;
+    $(idVal).textContent = fmt(lo);
+  }
+}
+
+// r2 = 1 - 10^-s. Con s=0 el umbral es 0 (no filtra).
+const r2DeControl = (s) => (s <= 0) ? 0 : 1 - Math.pow(10, -s);
+
+const fmt = (v) => (Math.abs(v) >= 100 || Number.isInteger(v))
+  ? String(Math.round(v)) : v.toFixed(v < 10 ? 2 : 1);
+
+// ===========================================================================
+//  El modelo de estado
+// ===========================================================================
+//
+// Una trayectoria puede no verse por cuatro motivos distintos. En la vista
+// actual del wizard eso son tres mecanismos independientes (3 sliders,
+// checkboxes de clase y una capa de borrados) y cuando algo desaparece no
+// hay forma de saber cual de los tres lo escondio.
+//
+// Aca hay UN estado y una razon:
+//   activa      se ve normal
+//   oculta      la escondio un filtro; `razon` dice cual
+//   descartada  la descarto el usuario; ningun filtro la revive
+//
+// El descarte manual gana siempre: si el usuario la boto, un slider no la
+// devuelve a escena sin que el usuario lo pida.
+
+function recalcular(){
+  const cuenta = { activa: 0, descartada: 0 };
+  const razones = {};
+
+  for (const T of C.proyecciones){
+    if (T.estado === "descartada"){ cuenta.descartada++; continue; }
+
+    let razon = null;
+    if (!F.clases[T.clasificacion]) razon = "clase";
+    else if (T.fuente !== "manual"){
+      // Los filtros de calidad describen la DETECCION automatica: tortuosidad,
+      // R2 y escape los calcula el tracker. Una curva dibujada a mano no tiene
+      // esas metricas (lleva valores de relleno), asi que filtrarla por ellas
+      // solo consigue que desaparezca lo que acabas de dibujar.
+      if (T.n < F.len)                          razon = "largo";
+      else if (num(T.tortuosidad) > F.tor)      razon = "tortuosidad";
+      else if (num(T.escape_relativo) < F.esc)  razon = "escape";
+      else if (num(T.r2_score) < F.r2)          razon = "r2";
+    }
+
+    T.estado = razon ? "oculta" : "activa";
+    T.razon = razon;
+    if (razon){ razones[razon] = (razones[razon] || 0) + 1; }
+    else cuenta.activa++;
+  }
+
+  pintarCuentas(cuenta, razones);
+  refrescarAsoc();
+  resumenAsoc();
+  dibujar();
+}
+
+const num = (v) => (v === null || v === undefined || !isFinite(v)) ? 0 : v;
+
+function pintarCuentas(cuenta, razones){
+  const P = C.proyecciones;
+  const porClase = {};
+  for (const T of P){
+    if (T.estado !== "activa") continue;
+    porClase[T.clasificacion] = (porClase[T.clasificacion] || 0) + 1;
+  }
+  const filas = ["Proyección peligrosa", "Proyección", "Fuera de vista"].map(c => `
+    <div class="cuenta"><span class="lbl">
+      <span class="punto" style="background:${COLOR[c]}"></span>${c}</span>
+      <span class="n">${porClase[c] || 0}</span></div>`).join("");
+
+  $("cuentas").innerHTML = filas + `
+    <div class="cuenta total"><span class="lbl">Visibles</span>
+      <span class="n">${cuenta.activa} <span style="color:var(--dim);font-weight:400">/ ${P.length}</span></span></div>`;
+
+  const et = { clase:"por clase", largo:"por largo mínimo", tortuosidad:"por tortuosidad",
+               escape:"por escape relativo", r2:"por R²" };
+  let html = Object.keys(et).map(k => {
+    const n = razones[k] || 0;
+    return `<div class="${n ? "" : "cero"}"><span>Ocultas ${et[k]}</span><span>${n}</span></div>`;
+  }).join("");
+  if (cuenta.descartada)
+    html += `<div style="color:var(--txt)"><span>Descartadas por ti</span><span>${cuenta.descartada}</span></div>`;
+  $("razones").innerHTML = html;
+}
+
+// ===========================================================================
+//  Asociación al pozo de origen
+// ===========================================================================
+//
+// Prolonga la trayectoria hacia atras desde su tangente inicial y busca los
+// pozos que caen dentro de una CUÑA que se abre con la distancia (no un
+// circulo: la incertidumbre angular crece con el retroceso). Medido contra
+// trayectorias sinteticas: top-1 88%, top-3 99%, sigma=4 grados.
+//
+// Solo da CANDIDATOS, nunca el pozo a secas. Los pozos que la geometria no
+// distingue estan alineados sobre el eje de vuelo y detonan separados por
+// 216 ms: eso lo cierra el tiempo, no el espacio.
+
+const A = {
+  activo: false,
+  k: 0,                 // paralaje: O = nadir + (p0-nadir)/(1+k). Ver abajo.
+  sigma: 4,             // apertura de la cuña, en grados
+  nMin: 4,              // puntos minimos para fiarse de la tangente
+  nadir: null,
+  soloSel: true,        // dibujar el empalme solo de la seleccionada
+  pozoSel: -1,          // vista inversa: pozo -> sus trayectorias
+  mejor: [],            // indice de pozo mas probable por trayectoria
+
+  // ---- CALCE TEMPORAL ----------------------------------------------------
+  // Con `t` por punto el problema queda SOBREDETERMINADO: 4 observaciones
+  // contra 1 incognita. Dos restricciones nuevas, y una es gratis:
+  //   causalidad     el pozo tiene que haber detonado ANTES de que nazca la
+  //                  traza. Cero parametros que calibrar, elimina candidatos.
+  //   retardo        t_nacimiento - t_detonacion debe ser corto y consistente.
+  // Como los pozos vecinos detonan separados por 6.5 frames, esta ventana
+  // sola deja 2-3 candidatos y la geometria desempata. Es el complemento
+  // exacto: los pozos que el espacio no distingue, el tiempo si.
+  temporal: false,
+  tolCausal: 3,         // frames de margen: sincronizacion + ruido del tracker
+  retardo: 12,          // frames que tarda la roca en hacerse visible
+  retardoRef: 15,       // escala de la penalizacion mas alla de la ventana
+  hayTiempo: false,     // el caso trae eje temporal?
+};
+
+// Frame del clip en que detona un pozo. El CSV da `t` en ms desde el inicio de
+// la secuencia; `frame_detonacion` es el frame del clip donde revienta el
+// primero (t_min). El resto se ubica por diferencia.
+function frameDePozo(q){
+  const m = C.malla.meta;
+  const fps = C.meta.fps || 29.97;
+  return (C.meta.frame_detonacion ?? m.frame_inicio ?? 0)
+       + (q.t - m.t_min) * fps / 1000;
+}
+
+// Tangente inicial. En las manuales sale exacta de la Bezier; en las del
+// pipeline hay que estimarla de la polilinea, y ahi esta el riesgo: la traza
+// cruda tiene ruido de deteccion frame a frame. Un simple p0->p1 lo amplifica,
+// asi que se ajusta la direccion dominante (PCA) sobre el tramo inicial.
+function tangenteInicial(T){
+  if (T.bezier){
+    const B = T.bezier;
+    const d = { x: B.c1.x - B.p0.x, y: B.c1.y - B.p0.y };
+    const n = Math.hypot(d.x, d.y);
+    return n > 1e-6 ? { x: d.x / n, y: d.y / n, n: T.n, fiable: true } : null;
+  }
+
+  const p = T.puntos;
+  if (p.length < 4) return null;
+
+  // Tomamos el tramo inicial: al menos 3 puntos, y hasta acumular ~30 px o un
+  // tercio del recorrido. Mas alla la curvatura balistica ya sesga la recta.
+  const tope = Math.max(30, 0);
+  let m = 1, largo = 0;
+  while (m < T.n - 1 && (m < 3 || largo < tope) && m < Math.max(3, T.n / 3)){
+    largo += Math.hypot(p[2*m] - p[2*m-2], p[2*m+1] - p[2*m-1]);
+    m++;
+  }
+  const M = m + 1;
+
+  let cx = 0, cy = 0;
+  for (let i = 0; i < M; i++){ cx += p[2*i]; cy += p[2*i+1]; }
+  cx /= M; cy /= M;
+
+  // PCA de 2x2: la direccion principal es el eigenvector mayor.
+  let sxx = 0, sxy = 0, syy = 0;
+  for (let i = 0; i < M; i++){
+    const dx = p[2*i] - cx, dy = p[2*i+1] - cy;
+    sxx += dx*dx; sxy += dx*dy; syy += dy*dy;
+  }
+  const tr = sxx + syy, det = sxx*syy - sxy*sxy;
+  const l = tr/2 + Math.sqrt(Math.max(0, tr*tr/4 - det));
+  let vx = (Math.abs(sxy) > 1e-9) ? l - syy : (sxx >= syy ? 1 : 0);
+  let vy = (Math.abs(sxy) > 1e-9) ? sxy     : (sxx >= syy ? 0 : 1);
+  const n = Math.hypot(vx, vy);
+  if (n < 1e-9) return null;
+  vx /= n; vy /= n;
+
+  // El eigenvector no tiene signo: lo orientamos en el sentido del vuelo.
+  const av = { x: p[2*(M-1)] - p[0], y: p[2*(M-1)+1] - p[1] };
+  if (vx*av.x + vy*av.y < 0){ vx = -vx; vy = -vy; }
+  return { x: vx, y: vy, n: M, fiable: T.n >= A.nMin };
+}
+
+function asociar(T){
+  if (!C.malla.pozos.length) return [];
+  const tg = tangenteInicial(T);
+  if (!tg) return [];
+
+  const nx = A.nadir.x, ny = A.nadir.y, f = 1 + A.k;
+  // Origen corregido de paralaje. El inicio VISIBLE no esta sobre el pozo: la
+  // roca ya subio unos metros y una camara cenital la proyecta mas lejos del
+  // nadir de lo que esta. h y z colapsan en un solo escalar k = z/(h-z), asi
+  // que no hace falta conocer la altura del dron ni la de la roca.
+  const O = { x: nx + (T.p0.x - nx) / f, y: ny + (T.p0.y - ny) / f };
+
+  const dx = -tg.x, dy = -tg.y;              // hacia atras
+  const pxm = C.calibra.escala_px_por_m || 1;
+  const tan  = Math.tan(A.sigma * Math.PI / 180);
+  const aMin = 15 * pxm;    // bajo 15 m el angulo no discrimina nada
+  const aRef = 70 * pxm;    // escala de la penalizacion por lejania
+  const aTol = -8 * pxm;    // margen para pozos apenas "adelante" del inicio
+
+  // El calce temporal entra DENTRO del ranking, no como filtro posterior: si
+  // el mejor candidato geometrico resulta imposible en el tiempo, el segundo
+  // toma su lugar en vez de quedarse la trayectoria sin pozo.
+  const usaT = A.temporal && A.hayTiempo && T.t_ini != null;
+
+  const res = [];
+  const pozos = C.malla.pozos;
+  for (let i = 0; i < pozos.length; i++){
+    const vx = pozos[i].px - O.x, vy = pozos[i].py - O.y;
+    const a = vx*dx + vy*dy;                 // avance hacia atras
+    if (a < aTol) continue;                  // el pozo quedo adelante del inicio
+    const perp = Math.abs(vx*dy - vy*dx);    // desvio del eje de vuelo
+    const ang = perp / (tan * Math.max(a, aMin));
+    const lej = Math.max(0, a) / aRef;
+
+    let tmp = 0, dt = null;
+    if (usaT){
+      dt = T.t_ini - frameDePozo(pozos[i]);
+      // Causalidad dura: la roca no puede ser visible antes de que su pozo
+      // reviente. Sin parametros que calibrar, descarta candidatos gratis.
+      if (dt < -A.tolCausal) continue;
+      // Coherencia: pasada la ventana de aparicion, el candidato se penaliza.
+      tmp = Math.max(0, dt - A.retardo) / A.retardoRef;
+    }
+    res.push({ i, a, dt, costo: ang*ang + lej*lej + tmp*tmp });
+  }
+
+  res.sort((x, y) => x.costo - y.costo);
+  const top = res.slice(0, 5);
+  const w = top.map(r => Math.exp(-r.costo / 2));
+  const tot = w.reduce((x, y) => x + y, 0) || 1;
+  top.forEach((r, j) => r.conf = w[j] / tot);
+  top.fiable = tg.fiable;
+  return top;
+}
+
+// Nunca se reporta un pozo unico: el nivel degrada segun cuanto destaque el
+// mejor candidato. Es mas defendible que afirmar un pozo que el cliente puede
+// desmentir senalando el crater de al lado.
+function nivelAsoc(cand){
+  if (!cand || !cand.length) return null;
+  const c = cand[0].conf;
+  return c >= 0.55 ? "pozo" : c >= 0.28 ? "grupo" : "sector";
+}
+
+function refrescarAsoc(){
+  A.mejor = [];
+  if (!A.activo) return;
+  A.mejor = C.proyecciones.map(T => {
+    if (T.estado !== "activa") return -1;
+    if (T.n < A.nMin && !T.bezier) return -1;   // 2 puntos no dan tangente
+    const c = asociar(T);
+    T.asociacion = c.length
+      ? { pozo: C.malla.pozos[c[0].i].id, conf: +c[0].conf.toFixed(3),
+          nivel: nivelAsoc(c), fiable: !!c.fiable,
+          dt_frames: c[0].dt != null ? +c[0].dt.toFixed(1) : null,
+          temporal: A.temporal && A.hayTiempo }
+      : null;
+    return c.length ? c[0].i : -1;
+  });
+}
+
+// Tramo del pozo al inicio del trazo. Bezier cuadratica cuyo control se apoya
+// en la MISMA tangente con que arranca la trayectoria: asi el empalme no tiene
+// quiebre y las dos piezas se leen como una sola. Punteado, porque ese tramo
+// no se ve en el video: lo puso el sistema.
+function tramoOrigen(T, iPozo){
+  if (iPozo < 0) return null;
+  const tg = tangenteInicial(T);
+  if (!tg) return null;
+  const q = C.malla.pozos[iPozo];
+  const L = Math.hypot(q.px - T.p0.x, q.py - T.p0.y);
+  return { Q: { x: q.px, y: q.py },
+           Cc: { x: T.p0.x - tg.x * L * 0.5, y: T.p0.y - tg.y * L * 0.5 } };
+}
+
+// ===========================================================================
+//  Dibujo
+// ===========================================================================
+
+function ajustarVista(){
+  const W = C.meta.ancho, H = C.meta.alto;
+  const r = lienzo.getBoundingClientRect();
+  V.w = r.width; V.h = r.height;
+  for (const c of [cf, cz]){ c.width = r.width; c.height = r.height; }
+  V.z = Math.min(r.width / W, r.height / H) * 0.96;
+  V.x = (r.width - W * V.z) / 2;
+  V.y = (r.height - H * V.z) / 2;
+  dibujar();
+}
+
+const aPan = (p) => ({ x: p.x * V.z + V.x, y: p.y * V.z + V.y });
+const aImg = (x, y) => ({ x: (x - V.x) / V.z, y: (y - V.y) / V.z });
+
+function dibujar(){
+  dibujarFondo();
+  dibujarTrazos();
+  pie();
+}
+
+function dibujarFondo(){
+  gf.clearRect(0, 0, V.w, V.h);
+  const im = U.fondo === "ninguno" ? null : IMG[U.fondo];
+  if (!im) return;
+  gf.globalAlpha = U.opFondo;
+  gf.imageSmoothingQuality = "high";
+  gf.drawImage(im, V.x, V.y, C.meta.ancho * V.z, C.meta.alto * V.z);
+  gf.globalAlpha = 1;
+}
+
+function dibujarTrazos(){
+  gz.clearRect(0, 0, V.w, V.h);
+  if (!C) return;
+
+  if (U.escape) dibujarEscape();
+  if (U.zonas) dibujarZonas();
+  // La cuña va DEBAJO de la malla: es la región de búsqueda, no un resultado.
+  if (A.activo && U.malla) dibujarCuna();
+  if (U.malla) dibujarMalla();
+
+  const ancho = Math.max(1.2, 2.2 * Math.sqrt(V.z));
+
+  // Descartadas primero y atenuadas: quedan como fondo, no compiten.
+  if (F.verDesc){
+    gz.globalAlpha = F.opDesc;
+    gz.strokeStyle = "#7c869b";
+    gz.lineWidth = ancho * 0.8;
+    for (const T of C.proyecciones)
+      if (T.estado === "descartada") trazar(T);
+    gz.globalAlpha = 1;
+  }
+
+  gz.lineWidth = ancho;
+  gz.lineCap = "round"; gz.lineJoin = "round";
+  for (const T of C.proyecciones){
+    if (T.estado !== "activa") continue;
+    gz.strokeStyle = COLOR[T.clasificacion] || "#9aa4b8";
+    trazar(T);
+  }
+
+  if (A.activo) dibujarEmpalmes(ancho);
+  if (U.sel >= 0) resaltar(C.proyecciones[U.sel], ancho);
+  if (NUEVO) dibujarNuevo();
+  if (A.activo) dibujarNadir();
+  if (LAZO.pts.length) dibujarLazo();
+}
+
+// Cuña de retroceso: por donde pudo haber venido la roca. Se ABRE con la
+// distancia porque un error de angulo en el trazo barre mas lejos — dibujarla
+// como un radio fijo mentiria sobre la incertidumbre real. Va debajo de la
+// malla: es la region de busqueda, no un resultado.
+function dibujarCuna(){
+  if (U.sel < 0) return;
+  const T = C.proyecciones[U.sel];
+  if (T.estado !== "activa") return;
+  const cand = asociar(T);
+  if (!cand.length) return;
+  const tg = tangenteInicial(T);
+  if (!tg) return;
+
+  const nx = A.nadir.x, ny = A.nadir.y, f = 1 + A.k;
+  const O = { x: nx + (T.p0.x - nx)/f, y: ny + (T.p0.y - ny)/f };
+  const dx = -tg.x, dy = -tg.y;
+  const pxm = C.calibra.escala_px_por_m || 1;
+
+  const L = Math.max(...cand.map(r => r.a)) + 25 * pxm;
+  const w = Math.tan(A.sigma * Math.PI / 180) * L;
+  const ex = -dy, ey = dx;
+
+  const o = aPan(O);
+  const v1 = aPan({ x: O.x + dx*L + ex*w, y: O.y + dy*L + ey*w });
+  const v2 = aPan({ x: O.x + dx*L - ex*w, y: O.y + dy*L - ey*w });
+
+  gz.save();
+  gz.beginPath();
+  gz.moveTo(o.x, o.y); gz.lineTo(v1.x, v1.y); gz.lineTo(v2.x, v2.y);
+  gz.closePath();
+  gz.fillStyle = "rgba(235,104,52,.10)";
+  gz.fill();
+  gz.strokeStyle = "rgba(235,104,52,.34)";
+  gz.lineWidth = 1;
+  gz.stroke();
+
+  // Eje de la cuña hasta el mejor candidato.
+  const q = C.malla.pozos[cand[0].i];
+  const m = aPan({ x: q.px, y: q.py });
+  gz.beginPath();
+  gz.setLineDash([9, 7]);
+  gz.moveTo(o.x, o.y); gz.lineTo(m.x, m.y);
+  gz.strokeStyle = "rgba(235,104,52,.85)";
+  gz.lineWidth = 1.6;
+  gz.stroke();
+  gz.setLineDash([]);
+
+  // El origen corregido NO coincide con el inicio del trazo, y esa diferencia
+  // es justamente el dato: el punto visible esta corrido hacia AFUERA del
+  // nadir porque la roca ya habia subido. Se dibuja p0 -> O para que se lea
+  // como un desplazamiento y no como un punto suelto.
+  const a = aPan(T.p0);
+  if (Math.hypot(o.x - a.x, o.y - a.y) > 2){
+    gz.beginPath();
+    gz.moveTo(a.x, a.y); gz.lineTo(o.x, o.y);
+    gz.strokeStyle = "rgba(235,104,52,.7)";
+    gz.lineWidth = 1.2;
+    gz.stroke();
+    gz.beginPath(); gz.arc(o.x, o.y, 3.5, 0, 7);
+    gz.fillStyle = "#eb6834"; gz.fill();
+  }
+  gz.restore();
+}
+
+function dibujarEmpalmes(ancho){
+  gz.save();
+  gz.setLineDash([5, 4]);
+  gz.lineCap = "butt";
+
+  const pinta = (idx, alfa, grosor) => {
+    const T = C.proyecciones[idx];
+    const t = tramoOrigen(T, A.mejor[idx]);
+    if (!t) return;
+    const q = aPan(t.Q), c = aPan(t.Cc), a = aPan(T.p0);
+    gz.globalAlpha = alfa;
+    gz.strokeStyle = COLOR[T.clasificacion] || "#9aa4b8";
+    gz.lineWidth = grosor;
+    gz.beginPath();
+    gz.moveTo(q.x, q.y);
+    gz.quadraticCurveTo(c.x, c.y, a.x, a.y);
+    gz.stroke();
+  };
+
+  if (A.soloSel){
+    // Con 763 trayectorias, dibujar los 763 empalmes es una maraña ilegible.
+    // Por defecto solo la seleccionada, o las del pozo que estes mirando.
+    if (A.pozoSel >= 0){
+      for (let i = 0; i < C.proyecciones.length; i++)
+        if (A.mejor[i] === A.pozoSel) pinta(i, 0.85, ancho * 0.8);
+    } else if (U.sel >= 0 && A.mejor[U.sel] >= 0){
+      pinta(U.sel, 0.95, ancho);
+    }
+  } else {
+    for (let i = 0; i < C.proyecciones.length; i++)
+      if (A.mejor[i] >= 0) pinta(i, 0.30, ancho * 0.65);
+  }
+  gz.restore();
+}
+
+// El nadir es el unico punto de referencia geometrico de todo el calculo: el
+// pixel bajo la camara. Se arrastra a mano porque no hay telemetria fiable.
+function dibujarNadir(){
+  const p = aPan(A.nadir);
+  gz.save();
+  gz.strokeStyle = "#7bd88f"; gz.lineWidth = 1.4;
+  gz.beginPath(); gz.arc(p.x, p.y, 9, 0, 7); gz.stroke();
+  gz.beginPath();
+  gz.moveTo(p.x - 15, p.y); gz.lineTo(p.x + 15, p.y);
+  gz.moveTo(p.x, p.y - 15); gz.lineTo(p.x, p.y + 15);
+  gz.stroke();
+  gz.fillStyle = "#7bd88f"; gz.font = "11px system-ui";
+  gz.fillText("nadir", p.x + 13, p.y - 11);
+  gz.restore();
+}
+
+// Las manuales se dibujan como la curva que son, no como su rasterizado: asi
+// no pierden suavidad al acercar el zoom. Las del pipeline son polilineas
+// reales (detecciones frame a frame) y se trazan tal cual.
+function trazar(T){
+  gz.beginPath();
+  if (T.bezier){
+    const B = T.bezier;
+    const a = aPan(B.p0), b = aPan(B.p2), c = aPan(B.c1);
+    gz.moveTo(a.x, a.y);
+    if (B.c2){ const d = aPan(B.c2); gz.bezierCurveTo(c.x, c.y, d.x, d.y, b.x, b.y); }
+    else gz.quadraticCurveTo(c.x, c.y, b.x, b.y);
+  } else {
+    const p = T.puntos;
+    gz.moveTo(p[0] * V.z + V.x, p[1] * V.z + V.y);
+    for (let i = 2; i < p.length; i += 2)
+      gz.lineTo(p[i] * V.z + V.x, p[i+1] * V.z + V.y);
+  }
+  gz.stroke();
+}
+
+// El resaltado tiene que RESPETAR el estado. Si repinta a todo color una
+// trayectoria descartada, descartar la seleccionada no se ve y parece que el
+// boton no hizo nada.
+function resaltar(T, ancho){
+  const desc = T.estado === "descartada";
+  if (desc && !F.verDesc) return;
+  gz.save();
+  gz.strokeStyle = desc ? "rgba(255,255,255,.5)" : "#ffffff";
+  gz.lineWidth = ancho + 2.5;
+  gz.globalAlpha = desc ? 0.5 : 0.85;
+  trazar(T);
+  gz.globalAlpha = desc ? Math.max(F.opDesc, 0.45) : 1;
+  gz.strokeStyle = desc ? "#7c869b" : (COLOR[T.clasificacion] || "#9aa4b8");
+  gz.lineWidth = ancho;
+  trazar(T);
+  gz.globalAlpha = 1;
+  // extremos: origen lleno, impacto hueco
+  const a = aPan(T.p0), b = aPan(T.pf);
+  gz.fillStyle = desc ? "#b6bfd0" : "#fff";
+  gz.strokeStyle = gz.fillStyle;
+  gz.beginPath(); gz.arc(a.x, a.y, 4.5, 0, 7); gz.fill();
+  gz.beginPath(); gz.arc(b.x, b.y, 4.5, 0, 7); gz.stroke();
+  gz.restore();
+  if (T.bezier) pintarNodos(T);
+}
+
+// Nodos y varillas de una curva manual. Se dibujan en coordenadas de PANTALLA
+// para que su tamano no cambie con el zoom: a 8x unos tiradores escalados
+// taparian la imagen entera.
+function pintarNodos(T){
+  const B = T.bezier;
+  const p0 = aPan(B.p0), p2 = aPan(B.p2), c1 = aPan(B.c1);
+  const c2 = B.c2 ? aPan(B.c2) : null;
+
+  gz.save();
+  gz.setLineDash([4, 4]);
+  gz.strokeStyle = "rgba(77,163,255,.85)";
+  gz.lineWidth = 1;
+  gz.beginPath();
+  if (c2){ gz.moveTo(p0.x,p0.y); gz.lineTo(c1.x,c1.y); gz.moveTo(p2.x,p2.y); gz.lineTo(c2.x,c2.y); }
+  else   { gz.moveTo(p0.x,p0.y); gz.lineTo(c1.x,c1.y); gz.lineTo(p2.x,p2.y); }
+  gz.stroke();
+  gz.setLineDash([]);
+
+  const nodo = (p, relleno, r) => {
+    gz.beginPath(); gz.arc(p.x, p.y, r, 0, 6.2832);
+    gz.fillStyle = relleno; gz.fill();
+    gz.strokeStyle = "#0d0f14"; gz.lineWidth = 1.5; gz.stroke();
+  };
+  nodo(c1, "#4da3ff", 5.5);
+  if (c2) nodo(c2, "#4da3ff", 5.5);
+  nodo(p0, "#ffffff", 6);      // origen
+  nodo(p2, "#ffd23b", 6);      // impacto
+  gz.restore();
+}
+
+function dibujarMalla(){
+  const pozos = C.malla.pozos;
+  const t0 = C.malla.meta.t_min, t1 = C.malla.meta.t_max;
+  const r = Math.max(2, 3.4 * Math.sqrt(V.z));
+
+  // Confianza de cada candidato de la trayectoria seleccionada, para poder
+  // dibujar el ranking sobre la malla en vez de solo listarlo.
+  const conf = new Map();
+  let mejorIdx = -1;
+  if (A.activo && U.sel >= 0){
+    const cand = asociar(C.proyecciones[U.sel]);
+    for (const c of cand) conf.set(c.i, c.conf);
+    if (cand.length) mejorIdx = cand[0].i;
+  }
+
+  for (let i = 0; i < pozos.length; i++){
+    const q = pozos[i];
+    const p = aPan({ x: q.px, y: q.py });
+    const u = (t1 > t0) ? (q.t - t0) / (t1 - t0) : 0.5;
+    gz.fillStyle = rampa(u);
+    gz.beginPath(); gz.arc(p.x, p.y, r, 0, 7); gz.fill();
+
+    if (conf.has(i)){
+      // Anillo proporcional a la confianza: el candidato fuerte se ve de lejos.
+      // Naranja contra la rampa azul de los pozos: son las dos primeras ranuras
+      // categóricas, el par más separado que hay.
+      const c = conf.get(i);
+      gz.save();
+      gz.strokeStyle = "#eb6834";
+      gz.globalAlpha = 0.35 + 0.65 * c;
+      gz.lineWidth = 1.6 + 3.4 * c;
+      gz.beginPath(); gz.arc(p.x, p.y, r + 3.5 + 2.5 * c, 0, 7); gz.stroke();
+      gz.restore();
+
+      // El mejor candidato lleva su número: es la respuesta, y buscarla en la
+      // lista lateral mientras miras la imagen rompe la lectura.
+      if (i === mejorIdx){
+        gz.save();
+        gz.font = "600 13px system-ui, sans-serif";
+        gz.textBaseline = "middle";
+        gz.lineWidth = 3;
+        gz.strokeStyle = "rgba(8,10,14,.9)";
+        gz.strokeText(q.id, p.x + r + 5, p.y);
+        gz.fillStyle = "#ffffff";
+        gz.fillText(q.id, p.x + r + 5, p.y);
+        gz.restore();
+      }
+    }
+    if (i === A.pozoSel){
+      gz.save();
+      gz.strokeStyle = "#ffffff"; gz.lineWidth = 2;
+      gz.beginPath(); gz.arc(p.x, p.y, r + 6, 0, 7); gz.stroke();
+      gz.restore();
+    }
+  }
+}
+
+function pozoEn(p){
+  if (!U.malla) return -1;
+  const tol = Math.max(6, 10 / V.z);
+  const pozos = C.malla.pozos;
+  let mejor = -1, dmin = tol;
+  for (let i = 0; i < pozos.length; i++){
+    const d = Math.hypot(pozos[i].px - p.x, pozos[i].py - p.y);
+    if (d < dmin){ dmin = d; mejor = i; }
+  }
+  return mejor;
+}
+
+// Rampa secuencial de un solo tono (azul claro -> oscuro). Ordinal: se lee
+// como progresion, que es justo lo que es la secuencia de detonacion.
+function rampa(u){
+  const c = [[205,226,251],[158,197,244],[109,167,236],[57,135,229],[37,106,191],[24,79,149]];
+  const i = Math.max(0, Math.min(c.length - 1.001, u * (c.length - 1)));
+  const k = Math.floor(i), f = i - k;
+  const a = c[k], b = c[Math.min(k + 1, c.length - 1)];
+  return `rgb(${a.map((v, j) => Math.round(v + (b[j] - v) * f)).join(",")})`;
+}
+
+// Offset de un poligono CONVEXO por un disco (Minkowski): cada arista se
+// desplaza r hacia afuera y los vertices se cierran con un arco real. El hull
+// de los pozos es convexo por construccion, asi que esto es exacto.
+// El orden angular respecto al centroide reconstruye el contorno sin depender
+// de si los vertices venian en sentido horario o antihorario.
+function offsetConvexo(pts, r, seg = 7){
+  if (!pts || pts.length < 3 || r <= 0) return pts;
+  let cx = 0, cy = 0;
+  for (const p of pts){ cx += p[0]; cy += p[1]; }
+  cx /= pts.length; cy /= pts.length;
+
+  const V = [...pts].sort((a, b) =>
+    Math.atan2(a[1]-cy, a[0]-cx) - Math.atan2(b[1]-cy, b[0]-cx));
+  const N = V.length, nor = [];
+  for (let i = 0; i < N; i++){
+    const a = V[i], b = V[(i+1) % N];
+    let nx = b[1]-a[1], ny = -(b[0]-a[0]);
+    const L = Math.hypot(nx, ny) || 1; nx /= L; ny /= L;
+    const mx = (a[0]+b[0])/2 - cx, my = (a[1]+b[1])/2 - cy;
+    if (nx*mx + ny*my < 0){ nx = -nx; ny = -ny; }   // normal exterior
+    nor.push([nx, ny]);
+  }
+  const out = [];
+  for (let i = 0; i < N; i++){
+    const v = V[i], np = nor[(i-1+N) % N], nn = nor[i];
+    let a0 = Math.atan2(np[1], np[0]), a1 = Math.atan2(nn[1], nn[0]);
+    let d = a1 - a0;
+    while (d >  Math.PI) d -= 2*Math.PI;
+    while (d < -Math.PI) d += 2*Math.PI;
+    for (let s = 0; s <= seg; s++){
+      const a = a0 + d*s/seg;
+      out.push([v[0] + r*Math.cos(a), v[1] + r*Math.sin(a)]);
+    }
+  }
+  return out;
+}
+
+// Isolíneas de escape relativo. El pipeline define
+//     escape_relativo = (distancia máxima FUERA del área de origen)
+//                     / (diámetro equivalente de la voladura)
+// o sea se mide desde el BORDE del polígono de pozos, no desde el centro, y la
+// unidad es el diámetro de la propia voladura. Dibujar los anillos convierte
+// ese número abstracto en algo que se lee sobre la imagen: "esta roca salió
+// dos diámetros de voladura".
+// Coordenadas de malla (metros, relativas al centro) -> píxeles. `A` y `t` de
+// la meta son exactamente esa transformación.
+function mundoAPx(p){
+  const m = C.malla.meta, A = m.A, t = m.t;
+  return { x: A[0][0]*p[0] + A[0][1]*p[1] + t[0],
+           y: A[1][0]*p[0] + A[1][1]*p[1] + t[1] };
+}
+
+// La isolínea de escape relativo, atada al slider. Un solo anillo: es la
+// frontera del filtro que estás moviendo, así que ver dónde cae es la
+// pregunta — varios anillos fijos eran decoración.
+//
+// El offset va en METROS sobre el hull en coordenadas de malla y recién
+// después se proyecta, igual que hace el frontend con la zona de seguridad.
+// Un disco en metros no es un disco en píxeles si la homografía no es
+// isotrópica.
+function dibujarEscape(){
+  const hullM = C.zonas.origen_mundo;
+  if (!hullM || !hullM.length) return;
+  const diam = C.zonas.diametro_equiv_m;
+  if (!diam) return;
+
+  const metros = F.esc * diam;                  // escape_relativo -> metros
+  const anillo = (F.esc > 0 ? offsetConvexo(hullM, metros, 9) : hullM)
+                   .map(mundoAPx);
+
+  gz.save();
+  gz.beginPath();
+  anillo.forEach((p, i) => {
+    const q = aPan(p);
+    i ? gz.lineTo(q.x, q.y) : gz.moveTo(q.x, q.y);
+  });
+  gz.closePath();
+  gz.fillStyle = "rgba(255,184,43,.06)";
+  gz.fill();
+  gz.setLineDash(F.esc > 0 ? [] : [6, 6]);
+  gz.lineWidth = 1.6;
+  gz.strokeStyle = "rgba(255,184,43,.8)";
+  gz.stroke();
+
+  // Rótulo con las dos lecturas: el número del slider y a cuántos metros del
+  // borde de la voladura equivale.
+  const alto = anillo.reduce((a, b) => b.y < a.y ? b : a);
+  const q = aPan(alto);
+  gz.setLineDash([]);
+  gz.font = "600 12px system-ui, sans-serif";
+  gz.textAlign = "center";
+  gz.lineWidth = 3.5; gz.strokeStyle = "rgba(8,10,14,.92)";
+  const txt = `escape ${F.esc.toFixed(2)}×  ·  ${metros.toFixed(0)} m del borde`;
+  gz.strokeText(txt, q.x, q.y - 7);
+  gz.fillStyle = "rgba(255,184,43,.98)";
+  gz.fillText(txt, q.x, q.y - 7);
+  gz.textAlign = "left";
+  gz.restore();
+}
+
+function dibujarZonas(){
+  const trazarPoly = (pts, color, guion) => {
+    if (!pts || !pts.length) return;
+    gz.save();
+    gz.strokeStyle = color; gz.lineWidth = 1.6; gz.setLineDash(guion);
+    gz.beginPath();
+    pts.forEach((p, i) => {
+      const q = aPan({ x: p[0], y: p[1] });
+      i ? gz.lineTo(q.x, q.y) : gz.moveTo(q.x, q.y);
+    });
+    gz.closePath(); gz.stroke(); gz.restore();
+  };
+  trazarPoly(C.zonas.seguridad, "#4da3ff", [7, 5]);
+  trazarPoly(C.zonas.origen, "#7bd88f", []);
+}
+
+// El trazo en construccion se dibuja con la MISMA varilla punteada y los
+// mismos nodos que tendra al fijarse: si no, al soltar el tercer clic la
+// curva cambia de aspecto de golpe y parece que paso otra cosa.
+function dibujarNuevo(){
+  const { p0, p2, c1 } = NUEVO;
+  const a = aPan(p0);
+  gz.save();
+
+  if (p2){
+    const b = aPan(p2), c = aPan(c1 || p0);
+    gz.strokeStyle = "#7bd88f"; gz.lineWidth = 2.2; gz.setLineDash([]);
+    gz.beginPath(); gz.moveTo(a.x, a.y);
+    gz.quadraticCurveTo(c.x, c.y, b.x, b.y);
+    gz.stroke();
+
+    gz.setLineDash([4, 4]);
+    gz.strokeStyle = "rgba(77,163,255,.85)"; gz.lineWidth = 1;
+    gz.beginPath();
+    gz.moveTo(a.x, a.y); gz.lineTo(c.x, c.y); gz.lineTo(b.x, b.y);
+    gz.stroke();
+    gz.setLineDash([]);
+  }
+
+  const nodo = (p, relleno, r) => {
+    gz.beginPath(); gz.arc(p.x, p.y, r, 0, 6.2832);
+    gz.fillStyle = relleno; gz.fill();
+    gz.strokeStyle = "#0d0f14"; gz.lineWidth = 1.5; gz.stroke();
+  };
+  if (p2 && c1) nodo(aPan(c1), "#4da3ff", 5.5);
+  nodo(a, "#ffffff", 6);
+  if (p2) nodo(aPan(p2), "#ffd23b", 6);
+  gz.restore();
+}
+
+function pie(){
+  const m = C ? `${C.meta.nombre} · ${C.meta.ancho}×${C.meta.alto} · ${C.proyecciones.length} trayectorias` : "";
+  const z = `zoom ${(V.z * 100).toFixed(0)}%`;
+  const d = U.dibujando ? " · <b>dibujando</b>: clic inicio, clic impacto, mueve para curvar, clic para fijar" : "";
+
+  // El conteo del lazo va en vivo y en el color de la acción: un borrado en masa
+  // a ciegas es lo que hace perder la confianza en la herramienta.
+  let l = "";
+  if (arrastre && arrastre.lazo){
+    const col = LAZO.restaurar ? "#4da3ff" : "#ff4d4d";
+    const verbo = LAZO.restaurar ? "restaurar" : "descartar";
+    const modo = LAZO.tocar ? "que toquen" : "enteras dentro";
+    l = ` · <b style="color:${col}">${LAZO.n}</b> a ${verbo} <span style="opacity:.6">(${modo})</span>`;
+  } else if (U.lazo){
+    l = " · <b>lazo</b>: arrastra para rodear · Alt = las que tocan · Shift = restaurar";
+  }
+  const u = U.uniendo ? " · <b>unir</b>: haz clic en el otro tramo" : "";
+  $("pie").innerHTML = `${m} · ${z}${d}${l}${u}`;
+}
+
+// ===========================================================================
+//  Interaccion
+// ===========================================================================
+
+let arrastre = null;
+
+// Los nodos de la trayectoria seleccionada mandan sobre todo lo demas: si el
+// clic cae encima de un tirador, se agarra el tirador y no se selecciona otra
+// curva que pase por debajo.
+function agarrarNodo(p){
+  if (U.sel < 0) return null;
+  const T = C.proyecciones[U.sel];
+  if (!T.bezier) return null;
+  const tol = 9 / V.z;
+  const orden = T.bezier.c2 ? ["c1","c2","p0","p2"] : ["c1","p0","p2"];
+  for (const k of orden){
+    const q = T.bezier[k];
+    if (q && Math.hypot(q.x - p.x, q.y - p.y) <= tol) return k;
+  }
+  return null;
+}
+
+cz.addEventListener("mousedown", (e) => {
+  if (!C) return;
+  const p = aImg(e.offsetX, e.offsetY);
+
+  if (U.dibujando){
+    if (!NUEVO)               NUEVO = { p0: p, p2: null, c1: null };
+    else if (!NUEVO.p2)       NUEVO.p2 = p;
+    else                      fijarNuevo();
+    dibujar();
+    return;
+  }
+
+  // El lazo se arrastra: abajo empieza, mueve dibuja, arriba aplica. Los
+  // modificadores se leen ACÁ y se congelan para todo el trazo — si se leyeran
+  // al soltar, levantar el Alt un instante antes cambiaría lo que agarra.
+  if (U.lazo && e.button === 0){
+    LAZO.pts = [p];
+    LAZO.tocar = e.altKey;
+    LAZO.restaurar = e.shiftKey;
+    LAZO.n = 0;
+    arrastre = { lazo: true };
+    return;
+  }
+
+  // Unir: el segundo clic elige el otro tramo.
+  if (U.uniendo && e.button === 0){
+    const j = buscar(p);
+    if (j < 0) return;
+    if (j === U.sel){ alert("Esa es la misma trayectoria. Haz clic en la otra."); return; }
+    // Unir sirve para tramos CONSECUTIVOS de un mismo vuelo. Si los dos viven al
+    // mismo tiempo no son un vuelo partido: son dos detecciones de la misma roca
+    // (o de dos rocas distintas), y eso es otro problema. Se avisa en vez de
+    // impedirlo, porque a veces unirlos igual es lo que uno quiere.
+    const s = solapeTemporal(C.proyecciones[U.sel], C.proyecciones[j]);
+    if (s > 0 && !confirm(
+        `Estos dos tramos coexisten durante ${s} frames, así que no parecen las `
+      + `dos mitades de un mismo vuelo sino dos detecciones simultáneas.\n\n`
+      + `Los puntos se van a intercalar por tiempo.\n\n¿Unir igual?`)) return;
+    const nuevo = unirTrayectorias(U.sel, j);
+    if (nuevo != null){
+      U.sel = nuevo;
+      alternarUnir();          // una activación, una unión
+      recalcular(); verDetalle(); dibujar();
+    }
+    return;
+  }
+  if (e.button === 0 && !e.shiftKey){
+    // El nadir manda: es un blanco chico y se ajusta mucho al calibrar.
+    if (A.activo && Math.hypot(A.nadir.x - p.x, A.nadir.y - p.y) <= 14 / V.z){
+      arrastre = { nadir: true }; return;
+    }
+    const k = agarrarNodo(p);
+    if (k){ arrastre = { nodo: k, i: U.sel }; return; }
+    // Un pozo: muestra sus rocas (la vista inversa, que es la que el cliente
+    // pide — "de este pozo salieron estas").
+    if (A.activo){
+      const iq = pozoEn(p);
+      if (iq >= 0){
+        A.pozoSel = (A.pozoSel === iq) ? -1 : iq;
+        resumenAsoc(); dibujar(); return;
+      }
+    }
+    const i = buscar(p);
+    if (i >= 0){ U.sel = i; verDetalle(); dibujar(); return; }
+  }
+  arrastre = { x: e.clientX, y: e.clientY, vx: V.x, vy: V.y };
+  document.body.classList.add("paneando");
+});
+
+// El mousemove es global (para no perder el arrastre al salirse del canvas),
+// y ahi `offsetX` es relativo al elemento que este debajo del cursor, no al
+// lienzo: hay que ir por clientX y el rect del canvas o las coordenadas dan
+// un salto en cuanto el puntero pisa el panel lateral.
+function posLienzo(e){
+  const r = cz.getBoundingClientRect();
+  return aImg(e.clientX - r.left, e.clientY - r.top);
+}
+
+window.addEventListener("mousemove", (e) => {
+  if (arrastre && arrastre.lazo){
+    const d = posLienzo(e);
+    const u = LAZO.pts[LAZO.pts.length - 1];
+    // Un punto cada ~4 px de PANTALLA: sin esto el polígono junta miles de
+    // vértices y el conteo en vivo se arrastra.
+    if (Math.hypot(d.x - u.x, d.y - u.y) * V.z >= 4){
+      LAZO.pts.push(d);
+      LAZO.n = atrapadas(LAZO.pts, LAZO.tocar, LAZO.restaurar).length;
+    }
+    dibujar();
+    return;
+  }
+  if (arrastre && arrastre.nadir){
+    A.nadir = posLienzo(e);
+    refrescarAsoc(); dibujar();
+  } else if (arrastre && arrastre.nodo){
+    const T = C.proyecciones[arrastre.i], B = T.bezier;
+    const d = posLienzo(e);
+    const k = arrastre.nodo;
+    // Al mover un extremo, su manejador lo acompana a media velocidad: si no,
+    // la curva se deforma de golpe y hay que recomponerla entera.
+    if (k === "p0" || k === "p2"){
+      const v = { x: d.x - B[k].x, y: d.y - B[k].y };
+      const m = (k === "p0") ? "c1" : (B.c2 ? "c2" : "c1");
+      B[m].x += v.x / 2; B[m].y += v.y / 2;
+    }
+    B[k] = { x: d.x, y: d.y };
+    rasterizar(T); preparar(T);
+    dibujar(); verDetalle();
+  } else if (arrastre){
+    V.x = arrastre.vx + (e.clientX - arrastre.x);
+    V.y = arrastre.vy + (e.clientY - arrastre.y);
+    dibujar();
+  } else if (U.dibujando && NUEVO && NUEVO.p2){
+    NUEVO.c1 = posLienzo(e);
+    dibujar();
+  }
+});
+
+window.addEventListener("mouseup", () => {
+  if (arrastre && arrastre.lazo){
+    arrastre = null;
+    // Menos de 3 vértices es un clic suelto, no un lazo: se ignora en vez de
+    // descartar algo por accidente.
+    if (LAZO.pts.length < 3){ LAZO.pts = []; LAZO.n = 0; dibujar(); return; }
+    aplicarLazo();
+    return;
+  }
+  const eraNadir = arrastre && arrastre.nadir;
+  arrastre = null;
+  document.body.classList.remove("paneando");
+  // El resumen y el ranking se recalculan al SOLTAR, no durante el arrastre:
+  // reconstruir el HTML del panel en cada mousemove da tirones.
+  if (eraNadir){ resumenAsoc(); verDetalle(); }
+});
+
+lienzo.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  if (!C) return;
+  const f = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const antes = aImg(e.offsetX, e.offsetY);
+  V.z = Math.max(0.05, Math.min(12, V.z * f));
+  V.x = e.offsetX - antes.x * V.z;
+  V.y = e.offsetY - antes.y * V.z;
+  dibujar();
+}, { passive: false });
+
+// Hit-test: la mas cercana dentro de un radio que se afloja al alejar el zoom.
+function buscar(p){
+  const tol = 9 / V.z;
+  let mejor = -1, dmin = tol;
+  for (let i = 0; i < C.proyecciones.length; i++){
+    const T = C.proyecciones[i];
+    if (T.estado === "oculta") continue;
+    if (T.estado === "descartada" && !F.verDesc) continue;
+    const b = T.bb;
+    if (p.x < b.x0 - tol || p.x > b.x1 + tol || p.y < b.y0 - tol || p.y > b.y1 + tol) continue;
+    const d = distancia(p, T.puntos);
+    if (d < dmin){ dmin = d; mejor = i; }
+  }
+  return mejor;
+}
+
+function distancia(p, q){
+  let m = Infinity;
+  for (let i = 0; i + 3 < q.length; i += 2)
+    m = Math.min(m, distSeg(p.x, p.y, q[i], q[i+1], q[i+2], q[i+3]));
+  if (q.length === 2) m = Math.hypot(p.x - q[0], p.y - q[1]);
+  return m;
+}
+
+function distSeg(px, py, x1, y1, x2, y2){
+  const dx = x2 - x1, dy = y2 - y1;
+  const L = dx*dx + dy*dy;
+  let t = L ? ((px - x1) * dx + (py - y1) * dy) / L : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - x1 - t*dx, py - y1 - t*dy);
+}
+
+function verDetalle(){
+  if (U.sel < 0){
+    $("detalle").innerHTML = '<div class="vacio">Haz clic en una trayectoria.</div>';
+    return;
+  }
+  const T = C.proyecciones[U.sel];
+  const par = (k, v) => `<div class="par"><span>${k}</span><b>${v}</b></div>`;
+  const est = T.estado === "descartada" ? "descartada"
+            : T.estado === "oculta" ? `oculta (${T.razon})` : "visible";
+  const manual = T.fuente === "manual";
+  const unida = T.fuente === "unida";
+  $("detalle").innerHTML =
+    par("id", T.id) +
+    par("origen", manual ? "dibujada" : unida ? "unión de 2 tramos" : "pipeline") +
+    par("clase", T.clasificacion || "—") +
+    par("largo del trazo", (T.distancia_m ?? 0).toFixed(1) + " m") +
+    distanciaDesdePozo(T) +
+    par("puntos", T.n) +
+    (T.t_ini != null ? par("frames", `${T.t_ini} → ${T.t_fin}`) : "") +
+    (manual ? par("curva", T.bezier && T.bezier.c2 ? "cúbica (2 manejadores)" : "cuadrática")
+            : par("tortuosidad", (T.tortuosidad ?? 0).toFixed(3)) +
+              par("escape rel.", (T.escape_relativo ?? 0).toFixed(2)) +
+              par("R²", (T.r2_score ?? 0).toFixed(3))) +
+    par("estado", est) +
+    (manual ? `<div style="color:var(--dim);font-size:11px;margin-top:8px;line-height:1.5">
+        Arrastra los nodos para ajustarla.<br>
+        <kbd>C</kbd> alterna el segundo manejador (curva asimétrica).<br>
+        No la afectan los filtros de calidad.</div>` : "") +
+    (unida ? `<div style="color:var(--dim);font-size:11px;margin-top:8px;line-height:1.5">
+        Unida de <b>${(T.unida_de || []).join("</b> y <b>")}</b>, que quedaron
+        descartados.<br>
+        La tortuosidad se recalculó sobre el trazo completo; el escape relativo
+        y el R² se heredaron del valor más conservador de los dos.</div>` : "") +
+    panelCandidatos(T) +
+    `<div class="fila" style="margin-top:10px">
+       <button class="mini ${T.estado === "descartada" ? "" : "peligro"}" id="btnDesc">
+         ${T.estado === "descartada" ? "Restaurar" : "Descartar"}</button>
+     </div>`;
+  $("btnDesc").onclick = alternarDescarte;
+}
+
+// La distancia que de verdad voló la roca: del tiro de origen al último punto
+// visible. Solo se puede dar si la trayectoria está asociada, por eso aparece
+// y desaparece del panel según haya candidato.
+function distanciaDesdePozo(T){
+  if (!A.activo || T.estado !== "activa") return "";
+  const cand = asociar(T);
+  if (!cand.length) return "";
+  const q = C.malla.pozos[cand[0].i];
+  const d = Math.hypot(T.pf.x - q.px, T.pf.y - q.py) / (C.calibra.escala_px_por_m || 1);
+  return `<div class="par"><span>desde el tiro ${q.id}</span>`
+       + `<b style="color:#7bd88f">${d.toFixed(1)} m</b></div>`;
+}
+
+// El ranking de candidatos con su confianza. Se muestran los 5, no solo el
+// mejor: cuando el primero no destaca, ver los otros cuatro es justamente la
+// informacion util (dice que la geometria sola no alcanza ahi).
+function panelCandidatos(T){
+  if (!A.activo) return "";
+  if (T.estado !== "activa")
+    return `<div class="aviso-flojo">Solo se asocian las trayectorias visibles.</div>`;
+  if (!T.bezier && T.n < A.nMin)
+    return `<div class="aviso-flojo">Sin asociar: ${T.n} puntos.
+            Con menos de ${A.nMin} la tangente inicial no es confiable.</div>`;
+
+  const cand = asociar(T);
+  if (!cand.length) return `<div class="aviso-flojo">Ningún pozo detrás del inicio.</div>`;
+
+  const nivel = nivelAsoc(cand);
+  const et = { pozo: "origen", grupo: "origen probable", sector: "zona" }[nivel];
+  let html = `<div style="margin-top:11px;padding-top:9px;border-top:1px solid var(--line)">
+    <div style="margin-bottom:7px"><span class="nivel ${nivel}">${et}</span></div>`;
+
+  for (const c of cand){
+    const q = C.malla.pozos[c.i];
+    // Con calce temporal se muestra el desfase: es lo que permite juzgar si la
+    // asociacion es fisicamente razonable o solo geometricamente conveniente.
+    const dt = (c.dt != null)
+      ? `<span class="pc" title="frames entre la detonación y el nacimiento de la traza">${c.dt >= 0 ? "+" : ""}${c.dt.toFixed(0)}f</span>`
+      : "";
+    html += `<div class="cand"><span class="id">${q.id}</span>
+      <span class="barra"><i style="width:${(c.conf*100).toFixed(0)}%"></i></span>
+      <span class="pc">${(c.conf*100).toFixed(0)}%</span>${dt}</div>`;
+  }
+  if (!cand.fiable)
+    html += `<div class="aviso-flojo">Tangente estimada de pocos puntos: tómalo
+             como indicativo.</div>`;
+  return html + "</div>";
+}
+
+// ===========================================================================
+//  Lazo: descarte en masa
+// ===========================================================================
+//
+// El dolor que ataca: hay cientos de trazas de humo que hay que sacar a mano, y
+// con los duplicados casi superpuestos borras una y aparecen tres detrás. Uno
+// por uno es inviable.
+//
+// La decisión de diseño que importa es QUÉ agarra el lazo. Por defecto solo las
+// que quedan ENTERAS dentro: así una trayectoria larga y buena que simplemente
+// cruza la zona rodeada no se pierde, que es el error caro (borrar señal es
+// irreversible de hecho, aunque el estado se guarde). Con Alt agarra también las
+// que apenas tocan, para limpiar rápido una esquina donde no hay nada bueno.
+//
+// Y el conteo va EN VIVO mientras arrastras, porque un borrado en masa a ciegas
+// es exactamente lo que dejó al usuario sin confianza en la herramienta.
+
+// Punto en polígono por lanzamiento de rayo. El polígono llega como lista de
+// {x,y} y se recorre por pares consecutivos cerrando el último con el primero.
+function dentroPoly(x, y, poly){
+  let dentro = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++){
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    if (((yi > y) !== (yj > y)) &&
+        (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) dentro = !dentro;
+  }
+  return dentro;
+}
+
+function cajaDe(poly){
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of poly){
+    if (p.x < x0) x0 = p.x;
+    if (p.x > x1) x1 = p.x;
+    if (p.y < y0) y0 = p.y;
+    if (p.y > y1) y1 = p.y;
+  }
+  return { x0, y0, x1, y1 };
+}
+
+// Índices de las trayectorias que el lazo agarra. El descarte de la caja
+// envolvente es lo que hace esto viable en vivo: con 763 trayectorias de ~100
+// puntos, probar todo contra un polígono de 100 vértices en cada mousemove daría
+// tirones. La caja rechaza casi todas con cuatro comparaciones.
+function atrapadas(poly, tocar, restaurar){
+  if (poly.length < 3) return [];
+  const caja = cajaDe(poly);
+  const res = [];
+  for (let i = 0; i < C.proyecciones.length; i++){
+    const T = C.proyecciones[i];
+    // Restaurando se busca lo descartado; descartando, lo que se ve.
+    if (restaurar){
+      if (T.estado !== "descartada") continue;
+    } else {
+      if (T.estado === "descartada") continue;
+    }
+    const b = T.bb;
+    if (b.x1 < caja.x0 || b.x0 > caja.x1 || b.y1 < caja.y0 || b.y0 > caja.y1) continue;
+    // Para exigir la trayectoria entera, que su caja no quepa en la del lazo ya
+    // la descarta sin mirar un solo punto.
+    if (!tocar && (b.x0 < caja.x0 || b.x1 > caja.x1 || b.y0 < caja.y0 || b.y1 > caja.y1))
+      continue;
+
+    const p = T.puntos;
+    let alguno = false, todos = true;
+    for (let k = 0; k < p.length; k += 2){
+      if (dentroPoly(p[k], p[k+1], poly)){
+        alguno = true;
+        if (tocar) break;
+      } else {
+        todos = false;
+        if (!tocar) break;
+      }
+    }
+    if (tocar ? alguno : todos) res.push(i);
+  }
+  return res;
+}
+
+function aplicarLazo(){
+  const idx = atrapadas(LAZO.pts, LAZO.tocar, LAZO.restaurar);
+  for (const i of idx){
+    const T = C.proyecciones[i];
+    if (LAZO.restaurar){ T.estado = "activa"; T.razon = null; }
+    else { T.estado = "descartada"; T.razon = "lazo"; }
+  }
+  // Si la seleccionada se fue en la redada, deja de tener sentido el panel.
+  if (U.sel >= 0 && idx.includes(U.sel) && !LAZO.restaurar) U.sel = -1;
+  LAZO.pts = []; LAZO.n = 0;
+  recalcular(); verDetalle(); dibujar();
+  return idx.length;
+}
+
+function dibujarLazo(){
+  if (LAZO.pts.length < 2) return;
+  gz.save();
+  gz.beginPath();
+  const q0 = aPan(LAZO.pts[0]);
+  gz.moveTo(q0.x, q0.y);
+  for (let i = 1; i < LAZO.pts.length; i++){
+    const q = aPan(LAZO.pts[i]);
+    gz.lineTo(q.x, q.y);
+  }
+  gz.closePath();
+  gz.fillStyle = LAZO.restaurar ? "rgba(77,163,255,0.12)" : "rgba(255,77,77,0.12)";
+  gz.fill();
+  gz.strokeStyle = LAZO.restaurar ? "#4da3ff" : "#ff4d4d";
+  gz.lineWidth = 1.5;
+  gz.setLineDash([6, 4]);
+  gz.stroke();
+  gz.setLineDash([]);
+  gz.restore();
+}
+
+function alternarLazo(){
+  U.lazo = !U.lazo;
+  LAZO.pts = []; LAZO.n = 0;
+  if (U.lazo && U.dibujando) alternarDibujo();
+  if (U.lazo && U.uniendo) alternarUnir();
+  $("btnLazo").classList.toggle("on", U.lazo);
+  document.body.classList.toggle("lazando", U.lazo);
+  dibujar();
+}
+
+function alternarDescarte(){
+  if (U.sel < 0) return;
+  const T = C.proyecciones[U.sel];
+  if (T.estado === "descartada"){ T.estado = "activa"; T.razon = null; }
+  else { T.estado = "descartada"; T.razon = "usuario"; }
+  recalcular(); verDetalle();
+}
+
+// ===========================================================================
+//  Unir dos trayectorias partidas
+// ===========================================================================
+//
+// Es el parche manual a la fragmentación: el tracker corta un vuelo largo en
+// dos justo donde la traza se devuelve en la imagen (el retroceso por paralaje),
+// y quedan dos mitades que son una sola roca.
+//
+// El orden lo decide el TIEMPO, no la geometría, cuando ambas lo traen: la que
+// nace antes va primero y ninguna se invierte. Ordenar por cercanía de extremos
+// obligaría a veces a dar vuelta una, y ahí `frames` dejaría de ir ascendente —
+// que es de donde salen `t_ini` y todo el calce temporal. Solo se cae a la
+// geometría con trazos manuales, que no tienen eje temporal.
+function unirTrayectorias(iA, iB){
+  const A1 = C.proyecciones[iA], B1 = C.proyecciones[iB];
+  if (!A1 || !B1 || iA === iB) return null;
+
+  let pri = A1, seg = B1;
+  const conTiempo = A1.t_ini != null && B1.t_ini != null;
+  if (conTiempo){
+    if (B1.t_ini < A1.t_ini){ pri = B1; seg = A1; }
+  } else {
+    // Sin tiempo: se elige el emparejamiento de extremos más corto y se invierte
+    // lo que haga falta para que la unión sea continua.
+    const d = (u, v) => Math.hypot(u.x - v.x, u.y - v.y);
+    const casos = [
+      { d: d(A1.pf, B1.p0), a: false, b: false },
+      { d: d(A1.pf, B1.pf), a: false, b: true  },
+      { d: d(A1.p0, B1.p0), a: true,  b: false },
+      { d: d(A1.p0, B1.pf), a: true,  b: true  },
+    ].sort((x, y) => x.d - y.d)[0];
+    if (casos.a) invertir(A1);
+    if (casos.b) invertir(B1);
+  }
+
+  // Con eje temporal los puntos se INTERCALAN por frame, no se concatenan.
+  //
+  // Concatenar solo funciona si un tramo termina antes de que el otro empiece.
+  // Si se solapan en el tiempo —y se solapan justo en el caso que más tienta a
+  // unir, dos detecciones casi superpuestas de la misma roca— la lista de frames
+  // deja de ir ascendente, y de ahí salen `t_ini` y todo el calce temporal.
+  // Ordenar por frame lo garantiza por construcción, y para dos tramos
+  // realmente consecutivos da exactamente el mismo resultado que concatenar.
+  let puntos, frames = null;
+  if (pri.frames && seg.frames){
+    const trios = [];
+    const cargar = (T) => {
+      for (let k = 0; k < T.frames.length; k++)
+        trios.push([T.frames[k], T.puntos[2*k], T.puntos[2*k+1]]);
+    };
+    cargar(pri); cargar(seg);
+    trios.sort((a, b) => a[0] - b[0]);
+    puntos = []; frames = [];
+    for (const [f, x, y] of trios){ frames.push(f); puntos.push(x, y); }
+  } else {
+    puntos = pri.puntos.concat(seg.puntos);
+  }
+
+  const esc = C.calibra.escala_px_por_m || 1;
+  const p0 = { x: puntos[0], y: puntos[1] };
+  const pf = { x: puntos[puntos.length - 2], y: puntos[puntos.length - 1] };
+
+  // Recorrido real sobre la polilínea, para la tortuosidad.
+  let largo = 0;
+  for (let k = 2; k < puntos.length; k += 2)
+    largo += Math.hypot(puntos[k] - puntos[k-2], puntos[k+1] - puntos[k-1]);
+  const cuerda = Math.hypot(pf.x - p0.x, pf.y - p0.y);
+
+  const T = {
+    id: `${pri.id}+${seg.id}`,
+    fuente: "unida",
+    unida_de: [pri.id, seg.id],
+    puntos, frames,
+    t_ini: frames ? frames[0] : null,
+    t_fin: frames ? frames[frames.length - 1] : null,
+    // La clasificación depende de DÓNDE TERMINA la roca (dentro del área, fuera,
+    // o saliéndose del cuadro), así que manda la del tramo que termina último.
+    // No es siempre el que empieza último: con tramos solapados, el que nace
+    // después puede apagarse antes.
+    clasificacion: (pri.t_fin != null && seg.t_fin != null && pri.t_fin > seg.t_fin)
+      ? pri.clasificacion : seg.clasificacion,
+    distancia_m: +(cuerda / esc).toFixed(2),
+    // Tortuosidad se recalcula exacta sobre la polilínea unida. Las otras dos no
+    // se pueden recalcular acá sin rehacer el ajuste del pipeline, así que se
+    // toma el valor conservador de cada una: la unión llega al menos tan lejos
+    // como el tramo que más se aleja, y no ajusta mejor que el peor de los dos.
+    tortuosidad: cuerda > 1e-6 ? +(largo / cuerda).toFixed(3) : 1,
+    escape_relativo: Math.max(pri.escape_relativo || 0, seg.escape_relativo || 0),
+    r2_score: Math.min(pri.r2_score ?? 1, seg.r2_score ?? 1),
+    estado: "activa", razon: null, asociacion: null,
+  };
+  preparar(T);
+
+  // Los dos tramos NO se borran: quedan descartados con su razón. Así el JSON
+  // sigue contando la historia completa y la unión se puede deshacer a mano.
+  pri.estado = "descartada"; pri.razon = "unida";
+  seg.estado = "descartada"; seg.razon = "unida";
+
+  C.proyecciones.push(T);
+  return C.proyecciones.length - 1;
+}
+
+// Frames en que los dos tramos coexisten. 0 o menos = son consecutivos.
+function solapeTemporal(A1, B1){
+  if (A1.t_ini == null || B1.t_ini == null) return 0;
+  return Math.max(0, Math.min(A1.t_fin, B1.t_fin) - Math.max(A1.t_ini, B1.t_ini));
+}
+
+function invertir(T){
+  const p = T.puntos, r = [];
+  for (let k = p.length - 2; k >= 0; k -= 2) r.push(p[k], p[k+1]);
+  T.puntos = r;
+  if (T.frames) T.frames = T.frames.slice().reverse();
+  preparar(T);
+}
+
+function alternarUnir(){
+  // Unir necesita una trayectoria ya elegida: es el primer tramo.
+  if (!U.uniendo && U.sel < 0){
+    alert("Primero selecciona una de las dos trayectorias y después activa Unir.");
+    return;
+  }
+  U.uniendo = !U.uniendo;
+  if (U.uniendo && U.dibujando) alternarDibujo();
+  if (U.uniendo && U.lazo) alternarLazo();
+  $("btnUnir").classList.toggle("on", U.uniendo);
+  document.body.classList.toggle("uniendo", U.uniendo);
+  dibujar();
+}
+
+function fijarNuevo(){
+  const { p0, p2, c1 } = NUEVO;
+  const T = {
+    id: "m" + Date.now().toString(36),
+    fuente: "manual",
+    // Los tres puntos de control se guardan y mandan: sin ellos se pierde la
+    // tangente inicial, que es justo de donde sale la asociacion al pozo.
+    bezier: { p0: { ...p0 },
+              c1: c1 ? { ...c1 } : { x: (p0.x + p2.x) / 2, y: (p0.y + p2.y) / 2 },
+              p2: { ...p2 }, c2: null },
+    puntos: [],
+    clasificacion: "Proyección",
+    tortuosidad: 1.0, escape_relativo: 0, r2_score: 1.0,
+    estado: "activa", razon: null, asociacion: null,
+  };
+  rasterizar(T); preparar(T);
+  C.proyecciones.push(T);
+  NUEVO = null;
+  U.sel = C.proyecciones.length - 1;
+  // Al fijar se SALE del modo dibujo. Si no, el clic siguiente (el que quiere
+  // agarrar un tirador para ajustar la curva recien hecha) cae en la rama de
+  // dibujo y arranca otra trayectoria encima. Una activacion, un trazo.
+  if (U.dibujando) alternarDibujo();
+  recalcular(); verDetalle();
+}
+
+// C alterna el segundo manejador de la seleccionada. Con dos manejadores los
+// angulos de entrada y salida son independientes, que es lo que hace falta
+// para una parabola asimetrica (la real lo es: el aire frena la caida).
+function alternarGrado(){
+  if (U.sel < 0) return;
+  const T = C.proyecciones[U.sel];
+  if (!T.bezier) return;
+  const B = T.bezier;
+  if (B.c2){
+    // Reduccion de grado: Q = (3(c1+c2) - p0 - p2) / 4. Es la inversa EXACTA
+    // de la elevacion de abajo, asi que ida y vuelta no deforma la curva.
+    B.c1 = { x: (3*(B.c1.x + B.c2.x) - B.p0.x - B.p2.x) / 4,
+             y: (3*(B.c1.y + B.c2.y) - B.p0.y - B.p2.y) / 4 };
+    B.c2 = null;
+  } else {
+    // Elevacion de grado exacta: la cubica es la misma curva pixel por pixel.
+    // Solo aparecen dos brazos donde habia uno.
+    const q = B.c1;
+    B.c1 = { x: B.p0.x + 2/3*(q.x - B.p0.x), y: B.p0.y + 2/3*(q.y - B.p0.y) };
+    B.c2 = { x: B.p2.x + 2/3*(q.x - B.p2.x), y: B.p2.y + 2/3*(q.y - B.p2.y) };
+  }
+  rasterizar(T); preparar(T);
+  recalcular(); verDetalle();
+}
+
+// --------------------------------------------------------------- controles
+
+const liga = (id, campo, fn) => {
+  $(id).addEventListener("input", (e) => {
+    F[campo] = parseFloat(e.target.value);
+    if (fn) fn(F[campo]);
+    recalcular();
+  });
+};
+liga("fEsc", "esc", v => $("vEsc").textContent = fmt(v));
+liga("fLen", "len", v => $("vLen").textContent = fmt(v));
+
+// Tortuosidad: el control va invertido, el umbral es max - control.
+$("fTor").addEventListener("input", (e) => {
+  F.tor = TOR_MAX - parseFloat(e.target.value);
+  $("vTor").textContent = F.tor.toFixed(3);
+  recalcular();
+});
+
+// R2: control logarítmico en la distancia a 1. Se muestran los decimales que
+// hagan falta, si no todo se ve como "1" pasado 0.99.
+$("fR2").addEventListener("input", (e) => {
+  const s = parseFloat(e.target.value);
+  F.r2 = r2DeControl(s);
+  $("vR2").textContent = s <= 0 ? "0" : F.r2.toFixed(Math.min(4, Math.ceil(s) + 1));
+  recalcular();
+});
+
+const ligaClase = (id, clase) => $(id).addEventListener("change", (e) => {
+  F.clases[clase] = e.target.checked; recalcular();
+});
+ligaClase("cPel", "Proyección peligrosa");
+ligaClase("cPro", "Proyección");
+ligaClase("cFue", "Fuera de vista");
+
+$("verDesc").addEventListener("change", e => { F.verDesc = e.target.checked; dibujar(); });
+$("opDesc").addEventListener("input", e => {
+  F.opDesc = parseFloat(e.target.value);
+  $("vOpDesc").textContent = F.opDesc.toFixed(2).slice(1);
+  dibujar();
+});
+$("selFondo").addEventListener("change", e => { U.fondo = e.target.value; dibujar(); });
+$("opFondo").addEventListener("input", e => {
+  U.opFondo = parseFloat(e.target.value);
+  $("vOpFondo").textContent = U.opFondo.toFixed(2).slice(1);
+  dibujarFondo();
+});
+
+$("btnMalla").addEventListener("click", e => {
+  U.malla = !U.malla; e.target.classList.toggle("on", U.malla); dibujar();
+});
+$("btnZonas").addEventListener("click", e => {
+  U.zonas = !U.zonas; e.target.classList.toggle("on", U.zonas); dibujar();
+});
+$("btnEscape").addEventListener("click", e => {
+  U.escape = !U.escape; e.target.classList.toggle("on", U.escape); dibujar();
+});
+$("btnDibujar").addEventListener("click", alternarDibujo);
+$("btnLazo").addEventListener("click", alternarLazo);
+$("btnUnir").addEventListener("click", alternarUnir);
+$("btnAsociar").addEventListener("click", alternarAsoc);
+
+// k es el parametro mas sensible del sistema: equivocarse un paso cuesta entre
+// 8 y 40 puntos de acierto. Por eso va en un slider a la vista y no escondido.
+$("fK").addEventListener("input", e => {
+  A.k = parseFloat(e.target.value);
+  $("vK").textContent = A.k.toFixed(3).replace(/0$/, "");
+  refrescarAsoc(); resumenAsoc(); verDetalle(); dibujar();
+});
+$("fSig").addEventListener("input", e => {
+  A.sigma = parseFloat(e.target.value);
+  $("vSig").textContent = A.sigma + "°";
+  refrescarAsoc(); resumenAsoc(); verDetalle(); dibujar();
+});
+$("chkTodos").addEventListener("change", e => {
+  A.soloSel = !e.target.checked; dibujar();
+});
+
+const relanzar = () => { refrescarAsoc(); resumenAsoc(); verDetalle(); dibujar(); };
+$("chkTemporal").addEventListener("change", e => { A.temporal = e.target.checked; relanzar(); });
+$("fRet").addEventListener("input", e => {
+  A.retardo = parseFloat(e.target.value);
+  $("vRet").textContent = A.retardo + "f";
+  relanzar();
+});
+$("fTol").addEventListener("input", e => {
+  A.tolCausal = parseFloat(e.target.value);
+  $("vTol").textContent = A.tolCausal + "f";
+  relanzar();
+});
+// El ancla temporal. `frameDePozo` la lee de C.meta.frame_detonacion, así que el
+// control escribe ahí directamente en vez de duplicar el estado.
+$("fAncla").addEventListener("input", e => {
+  C.meta.frame_detonacion = parseFloat(e.target.value);
+  $("vAncla").textContent = C.meta.frame_detonacion + "f";
+  relanzar();
+});
+$("btnNadirCentro").addEventListener("click", () => {
+  A.nadir = { x: C.meta.ancho / 2, y: C.meta.alto / 2 };
+  refrescarAsoc(); resumenAsoc(); verDetalle(); dibujar();
+});
+$("btnAjustar").addEventListener("click", ajustarVista);
+$("btnReset").addEventListener("click", () => { derivarRangos(); recalcular(); });
+$("btnRestaurar").addEventListener("click", () => {
+  for (const T of C.proyecciones){
+    // Los tramos consumidos por una unión NO se resucitan: volverían a la vista
+    // duplicando la trayectoria unida, que sigue ahí. Para deshacer una unión se
+    // descarta la unida y se restauran sus tramos desde el panel.
+    if (T.estado === "descartada" && T.razon !== "unida"){ T.estado = "activa"; T.razon = null; }
+  }
+  recalcular(); verDetalle();
+});
+
+function alternarAsoc(){
+  // Sin malla de tiros no hay a qué asociar. Hoy pasa solo si el usuario no
+  // cargó el CSV de secuencia en el paso 3: es opcional, y el análisis corre
+  // igual sin él. (Antes pasaba SIEMPRE, porque el CSV se quedaba en el
+  // navegador y nunca llegaba al backend.)
+  if (!A.activo && (!C.malla || !C.malla.pozos.length)){
+    alert("Este análisis no trae la malla de tiros, así que no hay a qué "
+        + "asociar.\n\nEl CSV de secuencia se carga hoy en el navegador y no "
+        + "se guarda con el job. El resto de la vista funciona igual: filtrar, "
+        + "descartar, dibujar y exportar.");
+    return;
+  }
+  A.activo = !A.activo;
+  A.pozoSel = -1;
+  $("btnAsociar").classList.toggle("on", A.activo);
+  document.body.classList.toggle("asociando", A.activo);
+  $("secAsoc").style.display = A.activo ? "" : "none";
+  // La asociacion no se ve sin la malla: al activarla se enciende sola.
+  if (A.activo && !U.malla){
+    U.malla = true;
+    $("btnMalla").classList.add("on");
+  }
+  refrescarAsoc(); resumenAsoc(); verDetalle(); dibujar();
+}
+
+function resumenAsoc(){
+  if (!A.activo) return;
+  const P = C.proyecciones;
+  let conAsoc = 0, flojas = 0, cortas = 0;
+  const niveles = { pozo: 0, grupo: 0, sector: 0 };
+  for (let i = 0; i < P.length; i++){
+    const T = P[i];
+    if (T.estado !== "activa") continue;
+    if (A.mejor[i] < 0){ cortas++; continue; }
+    conAsoc++;
+    if (T.asociacion){
+      niveles[T.asociacion.nivel]++;
+      if (!T.asociacion.fiable) flojas++;
+    }
+  }
+  const fila = (k, n, cls) =>
+    `<div class="cuenta"><span class="lbl"><span class="nivel ${cls}">${k}</span></span>
+     <span class="n">${n}</span></div>`;
+
+  let html = fila("pozo", niveles.pozo, "pozo")
+           + fila("grupo", niveles.grupo, "grupo")
+           + fila("sector", niveles.sector, "sector")
+           + `<div class="cuenta total"><span class="lbl">Asociadas</span>
+              <span class="n">${conAsoc}</span></div>`;
+
+  if (cortas)
+    html += `<div class="aviso-flojo">${cortas} sin asociar: menos de ${A.nMin}
+             puntos, la tangente inicial no es confiable.</div>`;
+  if (A.temporal && A.hayTiempo)
+    html += `<div style="color:var(--dim);font-size:11px;margin-top:8px;line-height:1.5">
+             Calce temporal activo: se descartan los pozos que detonaron después
+             del nacimiento de la traza (±${A.tolCausal}f) y se penaliza el
+             retardo sobre ${A.retardo} frames.</div>`;
+  else if (A.hayTiempo)
+    html += `<div class="aviso-flojo">Calce temporal apagado: solo geometría.
+             El 16% de las asociaciones geométricas de este caso son imposibles
+             en el tiempo.</div>`;
+  if (A.k === 0)
+    html += `<div class="aviso-flojo">Paralaje apagado (k = 0). El inicio visible
+             de la traza no está sobre el pozo; sin calibrar k el sesgo va hacia
+             afuera. Rango físico útil: 0.02–0.11.</div>`;
+  if (A.pozoSel >= 0){
+    const q = C.malla.pozos[A.pozoSel];
+    const n = A.mejor.filter((v, i) => v === A.pozoSel && C.proyecciones[i].estado === "activa").length;
+    html += `<div style="margin-top:10px;padding-top:9px;border-top:1px solid var(--line)">
+      <div class="par" style="display:flex;justify-content:space-between">
+        <span style="color:var(--dim)">Pozo ${q.id}</span><b>${n} rocas</b></div>
+      <div style="color:var(--dim);font-size:11px">detona a ${q.t} ms</div>
+      <button class="mini" id="btnLimpiarPozo" style="margin-top:8px">Quitar selección</button></div>`;
+  }
+  $("resAsoc").innerHTML = html;
+  const b = $("btnLimpiarPozo");
+  if (b) b.onclick = () => { A.pozoSel = -1; resumenAsoc(); dibujar(); };
+}
+
+function alternarDibujo(){
+  U.dibujando = !U.dibujando;
+  NUEVO = null;
+  // Los tres modos se excluyen: cada uno se apropia del clic izquierdo, y tener
+  // dos activos deja al usuario sin saber qué va a pasar al hacer clic.
+  if (U.dibujando && U.lazo) alternarLazo();
+  if (U.dibujando && U.uniendo) alternarUnir();
+  $("btnDibujar").classList.toggle("on", U.dibujando);
+  document.body.classList.toggle("dibujando", U.dibujando);
+  dibujar();
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "Delete" || e.key === "Backspace"){ alternarDescarte(); e.preventDefault(); }
+  else if (e.key === "c" || e.key === "C") alternarGrado();
+  else if (e.key === "d" || e.key === "D") alternarDibujo();
+  else if (e.key === "a" || e.key === "A") alternarAsoc();
+  else if (e.key === "l" || e.key === "L") alternarLazo();
+  else if (e.key === "u" || e.key === "U") alternarUnir();
+  else if (e.key === "Escape"){
+    NUEVO = null; U.sel = -1;
+    // Escape también aborta un lazo a medias y sale de los modos, que es lo que
+    // uno intenta cuando se dio cuenta de que iba a agarrar lo que no era.
+    LAZO.pts = []; LAZO.n = 0; arrastre = null;
+    if (U.lazo) alternarLazo();
+    if (U.uniendo){ U.uniendo = false; $("btnUnir").classList.remove("on");
+                    document.body.classList.remove("uniendo"); }
+    verDetalle(); dibujar();
+  }
+  else if (e.key === "f" || e.key === "F") ajustarVista();
+});
+
+// ===========================================================================
+//  Entregable: el JSON de trayectorias
+// ===========================================================================
+//
+// UNO solo, no uno interno y otro para el cliente: dos formatos divergen y a
+// las pocas semanas nadie sabe cual es la verdad. Lo esencial va arriba en
+// cada trayectoria (origen, clasificacion, distancias) y lo tecnico queda
+// anidado en `deteccion`, que el cliente ignora sin que le estorbe.
+//
+// Se incluyen TODAS las trayectorias con su `estado`: quitar las descartadas
+// perderia informacion que no se puede reconstruir despues.
+
+// Pixeles -> metros de mina. `A` y `t` mapean metros a pixeles, asi que la
+// vuelta es la inversa de esa afin.
+function pxAMundo(p){
+  const m = C.malla.meta, A = m.A, t = m.t;
+  const det = A[0][0]*A[1][1] - A[0][1]*A[1][0];
+  if (!det) return [0, 0];
+  const dx = p.x - t[0], dy = p.y - t[1];
+  return [ (A[1][1]*dx - A[0][1]*dy) / det,
+           (-A[1][0]*dx + A[0][0]*dy) / det ];
+}
+
+const r3 = (v) => (v == null || !isFinite(v)) ? null : +v.toFixed(3);
+
+function construirEntregable(){
+  const diam = C.zonas.diametro_equiv_m || 0;
+  const P = C.proyecciones;
+  const porPozo = new Map();
+
+  const trayectorias = P.map((T, i) => {
+    // Se asocia todo lo que no hayas descartado a mano, incluidas las que un
+    // filtro tiene ocultas: si mañana alguien afloja el filtro, la trayectoria
+    // ya trae su tiro de origen y no hay que recalcular nada.
+    const cand = (T.estado !== "descartada" && A.activo) ? asociar(T) : [];
+    const pozo = cand.length ? C.malla.pozos[cand[0].i] : null;
+
+    // Distancia MAXIMA fuera del area de voladura. Es la que se compara con el
+    // radio de evacuacion: ese radio se mide desde la voladura, no desde donde
+    // nacio la roca. `escape_relativo` ya la trae, normalizada por el diametro.
+    const salida = (T.escape_relativo != null) ? T.escape_relativo * diam : null;
+
+    // Distancia REAL de vuelo: del tiro de origen al último punto visible.
+    //
+    // No se mide desde el inicio del trazo porque ese punto no es donde nació
+    // la roca, es donde la cámara la vio por primera vez: el destello y el humo
+    // tapan el arranque. Está medido — el retardo entre la detonación y el
+    // nacimiento de la traza tiene mediana de 50 frames (1.7 s), y una roca a
+    // 30 m/s recorre 50 m en ese tiempo. Medir desde el trazo subestima
+    // siempre, y subestima más cuanto más tapado estaba el origen.
+    const desdePozo = pozo
+      ? Math.hypot(T.pf.x - pozo.px, T.pf.y - pozo.py) / (C.calibra.escala_px_por_m || 1)
+      : null;
+
+    // El agregado por pozo cuenta SOLO las visibles: es lo que alimenta el
+    // heatmap y el reporte, y tiene que reflejar lo que dejaste en pantalla.
+    if (pozo && T.estado === "activa"){
+      const e = porPozo.get(pozo.id) || { rocas: 0, alcance_max_m: 0, salida_max_m: 0 };
+      e.rocas++;
+      e.alcance_max_m = Math.max(e.alcance_max_m, desdePozo || T.distancia_m || 0);
+      e.salida_max_m = Math.max(e.salida_max_m, salida || 0);
+      porPozo.set(pozo.id, e);
+    }
+
+    return {
+      id: T.id,
+      // El estado va TAL CUAL. Antes las ocultas se exportaban como "activa",
+      // asi que filtrar 600 trayectorias no cambiaba nada en el entregable y
+      // encima quedaban marcadas activas pero sin origen (no se asociaban).
+      // Quien consuma el archivo filtra por estado; el resumen ya viene contado.
+      estado: T.estado,
+      oculta_por: T.razon,
+      // De dónde salió esta trayectoria: del detector, dibujada a mano, o unida
+      // de dos tramos. `unida_de` deja auditable qué se juntó y permite deshacer
+      // la unión leyendo el archivo, sin tener que confiar en la memoria de
+      // quien la hizo.
+      fuente: T.fuente || "pipeline",
+      unida_de: T.unida_de || null,
+      origen: pozo ? {
+        pozo: pozo.id,
+        confianza: r3(cand[0].conf),
+        nivel: nivelAsoc(cand),
+        detonacion_ms: pozo.t,
+        // El desfase entre la detonación y el nacimiento de la traza. Es lo
+        // que permite auditar si la asociación es físicamente razonable.
+        desfase_frames: cand[0].dt != null ? r3(cand[0].dt) : null,
+        candidatos: cand.slice(1).map(c => ({
+          pozo: C.malla.pozos[c.i].id, confianza: r3(c.conf) })),
+      } : null,
+      clasificacion: T.clasificacion,
+      // La distancia de la roca: del tiro de origen al último punto visible.
+      // Es la buena; `distancia_trazo_m` queda solo como referencia de cuánto
+      // alcanzó a verse.
+      distancia_m: r3(desdePozo),
+      distancia_trazo_m: r3(T.distancia_m),
+      salida_area_m: r3(salida),
+      alcance_censurado: T.clasificacion === "Fuera de vista",
+      // EL TRAZO. Es lo que el cliente pidio: la trayectoria, no solo de donde
+      // salio y donde cayo.
+      //
+      // `puntos` va en pixeles de imagen, plano [x,y,x,y,...], igual que lo
+      // entrega el detector. `frames` trae el frame de CADA punto, asi que el
+      // trazo es reproducible en el tiempo, no solo en el espacio.
+      //
+      // Van en pixeles y NO en metros a proposito: solo el origen y el impacto
+      // estan a ras de suelo (z ~ 0) y son convertibles con la homografia. Los
+      // puntos intermedios estan en el aire, y pasarlos por H-1 los manda a una
+      // posicion equivocada. Por eso `mina` solo da esos dos extremos.
+      trazo: {
+        puntos: T.puntos.map(v => Math.round(v)),
+        frames: T.frames || null,
+        // Las dibujadas a mano llevan ademas su curva exacta: con los tres (o
+        // cuatro) puntos de control se redibujan sin perder suavidad, mientras
+        // que `puntos` es su rasterizado.
+        bezier: T.bezier ? {
+          p0: [Math.round(T.bezier.p0.x), Math.round(T.bezier.p0.y)],
+          c1: [Math.round(T.bezier.c1.x), Math.round(T.bezier.c1.y)],
+          p2: [Math.round(T.bezier.p2.x), Math.round(T.bezier.p2.y)],
+          c2: T.bezier.c2 ? [Math.round(T.bezier.c2.x), Math.round(T.bezier.c2.y)] : null,
+        } : null,
+      },
+      px: { inicio: [Math.round(T.p0.x), Math.round(T.p0.y)],
+            impacto: [Math.round(T.pf.x), Math.round(T.pf.y)] },
+      mina: { inicio: pxAMundo(T.p0).map(v => +v.toFixed(2)),
+              impacto: pxAMundo(T.pf).map(v => +v.toFixed(2)) },
+      frames: T.t_ini != null ? { inicio: T.t_ini, fin: T.t_fin } : null,
+      deteccion: {
+        fuente: T.fuente,
+        puntos: T.n,
+        tortuosidad: T.tortuosidad,
+        escape_relativo: T.escape_relativo,
+        r2_score: T.r2_score,
+        razon_oculta: T.razon,
+      },
+    };
+  });
+
+  const act = trayectorias.filter(t => t.estado === "activa");
+  const cuenta = (f) => act.reduce((a, t) => (a[f(t)] = (a[f(t)] || 0) + 1, a), {});
+  // Se prefiere la distancia desde el tiro; si la trayectoria no llegó a
+  // asociarse, se cae a la del trazo para no perderla de las estadísticas.
+  const dists = act.map(t => t.distancia_m ?? t.distancia_trazo_m)
+                   .filter(v => v != null).sort((a, b) => a - b);
+  const radio = C.zonas.seguridad_m;
+
+  return {
+    meta: {
+      caso: C.meta.nombre,
+      video: C.meta.video,
+      generado: new Date().toISOString().slice(0, 19).replace("T", " "),
+      fps: C.meta.fps,
+      frame_detonacion: C.meta.frame_detonacion,
+      cuadro: [C.meta.ancho, C.meta.alto],
+      version_formato: 1,
+    },
+    parametros: {
+      // Sin esto el JSON no es reproducible: las asociaciones dependen de k y
+      // del nadir tanto como de la geometría del trazo.
+      paralaje_k: A.k,
+      nadir_px: [Math.round(A.nadir.x), Math.round(A.nadir.y)],
+      apertura_sigma_grados: A.sigma,
+      calce_temporal: (A.temporal && A.hayTiempo)
+        ? { activo: true, tolerancia_causal_frames: A.tolCausal,
+            retardo_frames: A.retardo }
+        : { activo: false },
+      radio_evacuacion_m: radio,
+      diametro_voladura_m: diam,
+      filtros: { tortuosidad_max: r3(F.tor), escape_relativo_min: r3(F.esc),
+                 r2_min: r3(F.r2), puntos_min: F.len },
+      homografia: { h_matrix: C.calibra.h_matrix, rms_px: C.calibra.rms_px },
+    },
+    resumen: {
+      // Las cifras de aqui abajo describen SOLO las visibles: son las que van
+      // al reporte. `trayectorias` es el total detectado, para que se vea
+      // cuanto se filtro y no parezca que el detector encontro menos.
+      trayectorias: trayectorias.length,
+      activas: act.length,
+      ocultas_por_filtro: trayectorias.filter(t => t.estado === "oculta").length,
+      ocultas_por_motivo: trayectorias.reduce((a, t) => (
+        t.estado === "oculta" ? (a[t.oculta_por || "?"] = (a[t.oculta_por || "?"] || 0) + 1, a) : a), {}),
+      descartadas: trayectorias.filter(t => t.estado === "descartada").length,
+      por_clasificacion: cuenta(t => t.clasificacion),
+      por_nivel_de_origen: cuenta(t => t.origen ? t.origen.nivel : "sin asociar"),
+      pozos_con_rocas: porPozo.size,
+      alcance_max_m: dists.length ? dists[dists.length-1] : null,
+      alcance_mediano_m: dists.length ? dists[Math.floor(dists.length/2)] : null,
+      fuera_del_radio_evacuacion: act.filter(t => (t.salida_area_m || 0) > radio).length,
+      fuera_de_vista: act.filter(t => t.alcance_censurado).length,
+    },
+    pozos: C.malla.pozos.map(q => {
+      const e = porPozo.get(q.id);
+      return { id: q.id, mina: [q.x, q.y], cota_z: q.z, px: [q.px, q.py],
+               detonacion_ms: q.t,
+               rocas: e ? e.rocas : 0,
+               alcance_max_m: e ? r3(e.alcance_max_m) : null,
+               salida_max_m: e ? r3(e.salida_max_m) : null };
+    }),
+    trayectorias,
+  };
+}
+
+function descargar(obj, nombre){
+  const b = new Blob([JSON.stringify(obj, null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(b);
+  a.download = nombre;
+  a.click();
+}
+
+// Render a resolución completa (3840x2160) reusando las MISMAS funciones de
+// dibujo de la pantalla. Se desvía temporalmente el contexto y la
+// transformación de vista, así lo exportado es exactamente lo que ves y no hay
+// un segundo renderizador que se desincronice del primero.
+//
+// `capas` decide qué lleva la imagen, para que cada entregable sea un botón y
+// no dependa de cómo tengas la pantalla en ese momento.
+function exportarImagen(capas, sufijo){
+  const W = C.meta.ancho, H = C.meta.alto;
+  const off = document.createElement("canvas");
+  off.width = W; off.height = H;
+  const g = off.getContext("2d");
+
+  const guardaV = { z: V.z, x: V.x, y: V.y, w: V.w, h: V.h };
+  const guardaG = gz;
+  const guardaU = { malla: U.malla, zonas: U.zonas, escape: U.escape, sel: U.sel };
+  const guardaA = { activo: A.activo, soloSel: A.soloSel, pozoSel: A.pozoSel };
+
+  try {
+    V.z = 1; V.x = 0; V.y = 0; V.w = W; V.h = H;
+    U.malla = !!capas.malla;
+    U.zonas = !!capas.zonas;
+    U.escape = false;              // el escape nunca va en los entregables
+    U.sel = -1;                    // sin resaltado de selección
+    A.activo = !!capas.empalmes;
+    A.soloSel = false;             // TODOS los empalmes, no el de la selección
+    A.pozoSel = -1;
+    gz = g;
+
+    // Los trazos primero y el fondo DESPUÉS, con destination-over. En pantalla
+    // el fondo vive en su propio canvas, pero acá es uno solo y dibujarTrazos()
+    // arranca con un clearRect que se llevaba el fondo por delante — ese era el
+    // motivo de que la imagen saliera sin terreno.
+    if (capas.trazos) dibujarTrazos();
+
+    // El modo se cambia SIEMPRE, haya trazos o no: si no, el relleno de abajo
+    // se pinta encima del fondo y la imagen sale en negro.
+    g.globalCompositeOperation = "destination-over";
+    const fondo = IMG[U.fondo] || IMG.mascara;
+    if (capas.fondo && fondo) g.drawImage(fondo, 0, 0, W, H);
+    g.fillStyle = "#0d0f14";
+    g.fillRect(0, 0, W, H);        // relleno bajo todo, por si el fondo no cubre
+    g.globalCompositeOperation = "source-over";
+  } finally {
+    gz = guardaG;
+    Object.assign(V, guardaV);
+    Object.assign(U, guardaU);
+    Object.assign(A, guardaA);
+  }
+
+  descargarCanvas(off, sufijo);
+  dibujar();
+}
+
+// Descarga un canvas como PNG. El try/catch no es decorativo: si el fondo se
+// cargó desde otro origen SIN cabeceras CORS, el canvas queda contaminado y
+// `toBlob` lanza SecurityError. Sin esto el botón no hace absolutamente nada y
+// el error solo aparece en la consola, que nadie mira.
+function descargarCanvas(canvas, sufijo){
+  try {
+    canvas.toBlob((b) => {
+      if (!b) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(b);
+      a.download = `flyrocks_${C.meta.nombre}_${sufijo}.png`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, "image/png");
+  } catch (e) {
+    console.error(e);
+    alert("No se pudo exportar la imagen: el navegador bloqueó el canvas "
+        + "porque la imagen de fondo viene de otro servidor que no autoriza "
+        + "su lectura.\n\nEl resto de la vista funciona; para exportar hace "
+        + "falta que el core mande las cabeceras CORS de /temp_videos.");
+  }
+}
+
+$("btnImgFondo").addEventListener("click", () =>
+  exportarImagen({ fondo: true }, "1_fondo"));
+$("btnImgTrazos").addEventListener("click", () =>
+  exportarImagen({ fondo: true, trazos: true, malla: true, zonas: true }, "2_trayectorias"));
+$("btnImgOrigen").addEventListener("click", () => {
+  if (!A.activo && !confirm(
+      "La asociación al pozo está apagada, así que esta imagen saldrá sin los "
+      + "empalmes al tiro de origen.\n\n¿Exportar igual?")) return;
+  exportarImagen({ fondo: true, trazos: true, malla: true, zonas: true,
+                   empalmes: true }, "3_origen");
+});
+
+// ===========================================================================
+//  Heatmap e histograma — se generan acá, no en Python
+// ===========================================================================
+// Estaban solo en salidas.py, lo que obligaba a saltar de herramienta a mitad
+// del trabajo. Son los mismos criterios que usa ese script.
+
+const bajar = (canvas, sufijo) => descargarCanvas(canvas, sufijo);
+
+// Material por tiro, como MOSAICO: cada tiro pinta su zona de influencia (los
+// puntos que le quedan más cerca que a cualquier otro), sobre una retícula
+// gruesa que deja el borde escalonado a propósito. La versión anterior era un
+// campo gaussiano continuo y se leía como una mancha que se derramaba fuera de
+// la malla, cuando el dato es por tiro y no un continuo.
+//
+// La malla está rotada 65° y en tresbolillo, así que cuadrados alineados a los
+// ejes saldrían torcidos respecto a ella; el vecino más cercano se adapta a la
+// geometría real sin dejar huecos ni solapes.
+//
+// SIN escala numerada, a propósito: la pregunta es de dónde salió más, no
+// cuántas rocas. Eso lo vuelve inmune a los duplicados y a que el detector
+// siga mejorando.
+function exportarHeatmap(){
+  const pozos = C.malla.pozos;
+  const rocas = new Array(pozos.length).fill(0);
+  for (let i = 0; i < C.proyecciones.length; i++){
+    if (C.proyecciones[i].estado !== "activa") continue;
+    const p = A.mejor[i];
+    if (p >= 0) rocas[p]++;
+  }
+  const maxR = Math.max(...rocas);
+  if (!maxR){
+    alert("Ningún tiro tiene rocas asociadas.\n\nEnciende «Asociar al pozo» primero.");
+    return;
+  }
+
+  const pxm = C.calibra.escala_px_por_m || 1;
+  const xs = pozos.map(q => q.px), ys = pozos.map(q => q.py);
+  const sep = 5.45 * pxm;                       // separación entre tiros, en px
+  const margen = 1.6 * sep;                     // sólo un respiro alrededor
+  const x0 = Math.min(...xs) - margen, x1 = Math.max(...xs) + margen;
+  const y0 = Math.min(...ys) - margen, y1 = Math.max(...ys) + margen;
+
+  // Lienzo generoso para que el mosaico se vea nítido en el PDF.
+  const esc = 1600 / (x1 - x0);
+  const W = Math.round((x1 - x0) * esc), H = Math.round((y1 - y0) * esc);
+  const off = document.createElement("canvas");
+  off.width = W; off.height = H + 120;          // franja inferior para la leyenda
+  const g = off.getContext("2d");
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, W, H + 120);
+
+  // Retícula: lado ~1/5 de la separación entre tiros. Suficientemente fino
+  // para seguir la forma de la malla y suficientemente grueso para que el
+  // borde se vea escalonado en vez de difuminado.
+  const celda = Math.max(4, Math.round(sep * esc / 5));
+  const alcance = 0.85 * sep;                   // hasta dónde llega cada tiro
+  const alcance2 = alcance * alcance;
+  // YlOrRd de ColorBrewer: la rampa clásica de mapa de calor, amarillo claro a
+  // rojo oscuro. Es multi-tono, pero no es un arcoíris: su luminancia baja de
+  // forma monótona en todo el recorrido, que es la propiedad que hace legible
+  // una escala secuencial. Arranca en el amarillo con algo de cuerpo (#ffeda0)
+  // y no en el más pálido, que sobre fondo blanco desaparecía.
+  const rampa = ["#ffeda0","#fed976","#feb24c","#fd8d3c","#fc4e2a","#e31a1c","#bd0026"];
+
+  // Escalones por DUPLICACIÓN (1 · 2-3 · 4-7 · 8-15 · 16-31 · 32-63 · 64+).
+  // La distribución de rocas por tiro es muy sesgada — mediana 3 contra un
+  // máximo de 81 — y tanto la escala lineal como la raíz amontonan casi todo
+  // en un par de escalones: medido acá, la raíz deja 56 de 80 tiros en el
+  // mismo tono y usa 5 de 7 niveles; ésta usa los 7 y reparte 21/28/13/12/2/2/2.
+  // Además es interpretable sin números: cada nivel es el doble del anterior.
+  const escalon = (n) => Math.max(0, Math.min(rampa.length - 1,
+                                              Math.floor(Math.log2(n))));
+
+  for (let py = 0; py < H; py += celda){
+    for (let px = 0; px < W; px += celda){
+      const ix = x0 + (px + celda / 2) / esc;
+      const iy = y0 + (py + celda / 2) / esc;
+      let mejor = -1, dmin = alcance2;
+      for (let k = 0; k < pozos.length; k++){
+        const dx = xs[k] - ix, dy = ys[k] - iy;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < dmin){ dmin = d2; mejor = k; }
+      }
+      if (mejor < 0) continue;
+      // Gris FRÍO para "sin material": la rampa es cálida de punta a punta, así
+      // que un gris azulado es lo único que no se confunde con su primer paso.
+      g.fillStyle = rocas[mejor] === 0 ? "#dde3e8" : rampa[escalon(rocas[mejor])];
+      g.fillRect(px, py, celda, celda);
+    }
+  }
+
+  // Cada tiro marcado con un punto: el mosaico es su zona, no su posición.
+  g.fillStyle = "rgba(11,11,11,.45)";
+  for (let k = 0; k < pozos.length; k++){
+    g.beginPath();
+    g.arc((xs[k] - x0) * esc, (ys[k] - y0) * esc, Math.max(1.5, celda * 0.22), 0, 7);
+    g.fill();
+  }
+
+  // Leyenda en escalones, del mismo paso que la rampa, sin números.
+  const bx = 40, by = H + 52, bw = 340, bh = 20;
+  const paso = bw / rampa.length;
+  rampa.forEach((c, i) => { g.fillStyle = c; g.fillRect(bx + i * paso, by, paso, bh); });
+  g.strokeStyle = "#c3c2b7"; g.lineWidth = 1; g.strokeRect(bx, by, bw, bh);
+  g.fillStyle = "#52514e";
+  g.font = "20px system-ui, sans-serif";
+  g.textBaseline = "middle"; g.textAlign = "right";
+  g.fillText("menos", bx - 12, by + bh / 2);
+  g.textAlign = "left";
+  g.fillText("más", bx + bw + 12, by + bh / 2);
+  g.fillStyle = "#dde3e8"; g.fillRect(bx + bw + 110, by, bh, bh);
+  g.strokeRect(bx + bw + 110, by, bh, bh);
+  g.fillStyle = "#52514e";
+  g.fillText("sin material", bx + bw + 110 + bh + 10, by + bh / 2);
+
+  bajar(off, "5_heatmap");
+}
+
+// Distribución de cuánto se alejó cada roca DEL ÁREA DE VOLADURA (no de cuánto
+// voló): el radio de evacuación se mide desde la tronadura, no desde donde
+// nació cada roca, y solo esa medida es comparable con la línea.
+function exportarHistograma(){
+  const act = C.proyecciones.filter(T => T.estado === "activa");
+  if (!act.length){ alert("No hay trayectorias visibles."); return; }
+  const diam = C.zonas.diametro_equiv_m || 1;
+  const radio = C.zonas.seguridad_m;
+  const d = act.map(T => (T.escape_relativo || 0) * diam);
+  const cens = act.map(T => T.clasificacion === "Fuera de vista");
+
+  const paso = 10;
+  const tope = Math.max(radio * 1.25, Math.ceil(Math.max(...d) / paso) * paso);
+  const n = Math.round(tope / paso);
+  const barras = new Array(n).fill(0), barrasC = new Array(n).fill(0);
+  d.forEach((v, i) => {
+    const k = Math.min(n - 1, Math.floor(v / paso));
+    if (cens[i]) barrasC[k]++; else barras[k]++;
+  });
+  const maxY = Math.max(...barras.map((v, i) => v + barrasC[i]), 1);
+
+  const W = 1600, H = 700;
+  const off = document.createElement("canvas");
+  off.width = W; off.height = H;
+  const g = off.getContext("2d");
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, W, H);
+
+  // Sin título ni notas, el margen superior baja: el gráfico ocupa el lienzo.
+  const L = 110, R = W - 60, T0 = 60, B = H - 90;
+  const ex = (v) => L + (v / tope) * (R - L);
+  const ey = (v) => B - (v / maxY) * (B - T0);
+
+  g.strokeStyle = "#dde3e8"; g.lineWidth = 1;
+  g.fillStyle = "#898781"; g.font = "20px system-ui, sans-serif";
+  g.textAlign = "right"; g.textBaseline = "middle";
+  const pasoY = Math.max(1, Math.pow(10, Math.floor(Math.log10(maxY))) / 2);
+  for (let v = 0; v <= maxY; v += pasoY){
+    const y = ey(v);
+    g.beginPath(); g.moveTo(L, y); g.lineTo(R, y); g.stroke();
+    g.fillText(String(Math.round(v)), L - 12, y);
+  }
+
+  const bw = (R - L) / n;
+  for (let i = 0; i < n; i++){
+    const total = barras[i] + barrasC[i];
+    if (!total) continue;
+    const x = L + i * bw;
+    g.fillStyle = "#2a78d6";
+    g.fillRect(x + 1, ey(barras[i]), bw - 2, B - ey(barras[i]));
+    if (barrasC[i]){
+      // Censuradas con textura, no con otro color: es el MISMO dato en otra
+      // condición (la roca salió del cuadro, su alcance es un mínimo).
+      const y0 = ey(total), alto = ey(barras[i]) - y0;
+      g.save();
+      g.beginPath(); g.rect(x + 1, y0, bw - 2, alto); g.clip();
+      g.strokeStyle = "#2a78d6"; g.lineWidth = 2;
+      for (let k = -alto; k < bw + alto; k += 7){
+        g.beginPath(); g.moveTo(x + k, y0 + alto); g.lineTo(x + k + alto, y0); g.stroke();
+      }
+      g.restore();
+      g.strokeStyle = "#2a78d6"; g.lineWidth = 1.5;
+      g.strokeRect(x + 1, y0, bw - 2, alto);
+    }
+  }
+
+  g.strokeStyle = "#c3c2b7"; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(L, B); g.lineTo(R, B); g.stroke();
+  g.fillStyle = "#898781"; g.font = "20px system-ui, sans-serif";
+  g.textAlign = "center"; g.textBaseline = "top";
+  for (let v = 0; v <= tope; v += 50){
+    g.fillText(String(v), ex(v), B + 10);
+  }
+
+  // La línea del radio se queda: no es un título, es parte de la lectura del
+  // gráfico (de ahí a la derecha es flyrock).
+  g.strokeStyle = "#d03b3b"; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(ex(radio), T0 - 14); g.lineTo(ex(radio), B); g.stroke();
+  g.fillStyle = "#d03b3b"; g.textAlign = "left"; g.textBaseline = "middle";
+  g.font = "600 21px system-ui, sans-serif";
+  g.fillText(`radio de evacuación ${radio.toFixed(0)} m`, ex(radio) + 12, T0 + (B - T0) * 0.40);
+  g.font = "21px system-ui, sans-serif";
+  g.fillText("flyrock →", ex(radio) + 12, T0 + (B - T0) * 0.50);
+
+  // Solo los rótulos de los ejes. Sin título, sin subtítulo y sin nota al pie:
+  // el gráfico va dentro de un documento que ya pone el contexto.
+  g.fillStyle = "#52514e"; g.font = "21px system-ui, sans-serif";
+  g.textAlign = "center"; g.textBaseline = "alphabetic";
+  g.fillText("Distancia fuera del área de voladura (m)", (L + R) / 2, B + 58);
+  g.save();
+  g.translate(34, (T0 + B) / 2); g.rotate(-Math.PI / 2);
+  g.fillText("Rocas", 0, 0);
+  g.restore();
+
+  // Leyenda
+  const lx = R - 430, ly = T0 + 6;
+  g.fillStyle = "#2a78d6"; g.fillRect(lx, ly, 30, 16);
+  g.fillStyle = "#52514e"; g.font = "20px system-ui, sans-serif";
+  g.textBaseline = "middle";
+  g.fillText("Alcance medido", lx + 42, ly + 8);
+  g.strokeStyle = "#2a78d6"; g.lineWidth = 1.5;
+  g.strokeRect(lx, ly + 30, 30, 16);
+  for (let k = 0; k < 30; k += 7){
+    g.beginPath(); g.moveTo(lx + k, ly + 46); g.lineTo(lx + k + 16, ly + 30); g.stroke();
+  }
+  g.fillStyle = "#52514e";
+  g.fillText("Salió del cuadro (mínimo)", lx + 42, ly + 38);
+
+  bajar(off, "6_histograma");
+}
+
+$("btnHeatmap").addEventListener("click", exportarHeatmap);
+$("btnHisto").addEventListener("click", exportarHistograma);
+
+// Los seis de una. Se separan en el tiempo porque algunos navegadores agrupan
+// descargas simultáneas y se pierden.
+$("btnTodo").addEventListener("click", () => {
+  const pasos = [
+    () => descargar(construirEntregable(), `flyrocks_${C.meta.nombre}.json`),
+    () => exportarImagen({ fondo: true }, "1_fondo"),
+    () => exportarImagen({ fondo: true, trazos: true, malla: true, zonas: true }, "2_trayectorias"),
+    () => exportarImagen({ fondo: true, trazos: true, malla: true, zonas: true, empalmes: true }, "3_origen"),
+    exportarHeatmap,
+    exportarHistograma,
+  ];
+  pasos.forEach((f, i) => setTimeout(f, i * 700));
+});
+
+$("btnEntregable").addEventListener("click", () => {
+  if (!A.activo)
+    alert("Enciende «Asociar al pozo» antes de exportar: sin eso las "
+        + "trayectorias salen sin su tiro de origen, que es lo que pidió el cliente.");
+  descargar(construirEntregable(), `flyrocks_${C.meta.nombre}.json`);
+});
+
+// El caso editado se descarga como JSON: mismo formato de entrada, asi que se
+// puede volver a abrir tal cual (y sirve de ground truth para la fase temporal).
+$("btnGuardar").addEventListener("click", () => {
+  const copia = JSON.parse(JSON.stringify(C));
+  for (const T of copia.proyecciones){
+    delete T.n; delete T.p0; delete T.pf; delete T.bb;
+    if (T.estado === "oculta"){ T.estado = "activa"; T.razon = null; }
+  }
+  copia.vista = { tortuosidad: F.tor, escape_relativo: F.esc, r2_score: F.r2, largo_min: F.len };
+  // La calibracion de la asociacion viaja con el caso: sin el nadir y el k con
+  // que se calcularon, las asociaciones guardadas no son reproducibles.
+  copia.calibra.nadir = [A.nadir.x, A.nadir.y];
+  copia.calibra.k = A.k;
+  copia.calibra.sigma_grados = A.sigma;
+  const b = new Blob([JSON.stringify(copia)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(b);
+  a.download = `caso_${C.meta.nombre}_editado.json`;
+  a.click();
+});
+
+// Retomar un avance guardado. Sin esto, "Guardar avance" era un botón que
+// producía un archivo que nada podía abrir.
+$("btnCargar").addEventListener("click", () => $("fileCaso").click());
+$("fileCaso").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const lector = new FileReader();
+  lector.onload = () => {
+    try {
+      const nuevo = JSON.parse(lector.result);
+      if (!nuevo.proyecciones || !nuevo.malla)
+        throw new Error("esto no es un caso guardado (¿es el JSON de entregable?)");
+      C = nuevo;
+      prepararTrayectorias();
+      derivarRangos();
+      // La calibración guardada manda sobre la del caso original: es el estado
+      // con el que estabas trabajando.
+      if (C.calibra.nadir) A.nadir = { x: C.calibra.nadir[0], y: C.calibra.nadir[1] };
+      A.k = C.calibra.k ?? 0;
+      A.sigma = C.calibra.sigma_grados ?? 4;
+      $("fK").value = A.k; $("vK").textContent = A.k.toFixed(2);
+      $("fSig").value = A.sigma; $("vSig").textContent = A.sigma + "°";
+      A.hayTiempo = C.proyecciones.some(t => t.t_ini != null);
+      U.sel = -1;
+      ajustarVista(); recalcular(); verDetalle();
+      $("pie").textContent = `avance cargado: ${f.name}`;
+    } catch (err){
+      alert("No se pudo cargar: " + err.message);
+    }
+  };
+  lector.readAsText(f);
+  e.target.value = "";
+});
+
+window.addEventListener("resize", () => { if (C) ajustarVista(); });
+
+cargar().catch(err => {
+  console.error(err);
+  $("pie").textContent = "Error: " + err.message;
+});
+</script>
+</body>
+</html>
