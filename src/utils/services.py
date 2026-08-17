@@ -6,18 +6,23 @@ from typing import Any, Dict
 
 from utils.database import Job, engine
 from utils.nodes.event_extractor import EventExtractorNode
+
+# NUEVO: Importamos el nodo de IA para el filtro de humo
+from utils.nodes.ai_smoke_filter import AISmokeFilterNode 
+
 from utils.nodes.trajectory_analysis import (
     EnergyPercentileFilterNode, DBSCANClusteringNode, 
     GridSearchNode, KalmanTrackerNode, TrajectoryCleanerNode
 )
-from utils.nodes.velocity_analysis import (
-    TrajectoryVelocityNode, GaussianThresholdNode,
-    HighVelocityFilterNode  
-)  
+
+# ELIMINAMOS TrajectoryVelocityNode y GaussianThresholdNode
+# Mantenemos HighVelocityFilterNode para formatear el diccionario final
+from utils.nodes.velocity_analysis import HighVelocityFilterNode  
+
 from utils.nodes.trajectory_smoothness import TrajectorySmoothnessNode
 from utils.nodes.image_renderer import BackgroundExtractorNode
 from utils.nodes.trajectory_categorization import TrajectoryCategorizationNode
-from utils.nodes.trajectory_filters import(
+from utils.nodes.trajectory_filters import (
     TortuosityCalculationNode, OriginAreaExpansionNode,
     TrajectorySmoothnessNode
 ) 
@@ -50,14 +55,19 @@ def run_pipeline_task(
         
         # --- Instanciamos los nodos ---
         extractor = EventExtractorNode(name="1_VideoExtractor", noise_threshold=8)
+        
+        # NUEVO: Instanciamos el filtro de humo con IA
+        ai_smoke = AISmokeFilterNode(name="1.5_AISmokeFilter", onnx_path="detovision_model_v18.onnx")
+        
         energy_filter = EnergyPercentileFilterNode(name="2_EnergyFilter", percentile=percentile)
         clustering = DBSCANClusteringNode(name="3_SpatialClustering", eps=esp)
         grid_search = GridSearchNode(name="4_GridSearchOptimizer", cores=CORES)
         tracker = KalmanTrackerNode(name="5_KalmanTracker")
         cleaner = TrajectoryCleanerNode(name="6_TrajectoryCleaner")
-        velocity_calc = TrajectoryVelocityNode(name="7_VelocityCalculator")
-        threshold_calc = GaussianThresholdNode(name="8_GaussianThreshold", sigma_multiplier=sigma)
-        rock_filter = HighVelocityFilterNode(name="9_HighVelocityFilter")
+        
+        # MODIFICADO: Bypass de velocidad (umbral 0.0 para que pase todo lo que sobrevivió a la IA y al Tracker)
+        rock_filter = HighVelocityFilterNode(name="9_HighVelocityFilter", manual_threshold=0.0)
+        
         categorizer = TrajectoryCategorizationNode(name="11_TrajectoryCategorizer")
         tortuosity_calc = TortuosityCalculationNode(name="12_TortuosityCalculation")
         origin_area_expansion = OriginAreaExpansionNode(name="13_OriginAreaExpansion")
@@ -66,14 +76,13 @@ def run_pipeline_task(
 
         pipeline_steps = [
             (extractor, "Extrayendo eventos del video", 10),
-            (energy_filter, "Filtrando energía (Percentil)", 15),
+            (ai_smoke, "Filtrando humo con IA (ONNX)", 15), # NUEVO PASO EN EL PIPELINE
+            (energy_filter, "Filtrando energía (Percentil)", 20),
             (clustering, "Ejecutando clustering DBSCAN", 35),
             (grid_search, "Optimizando Grid Search", 45),
             (tracker, "Rastreando partículas (Kalman)", 55),
             (cleaner, "Limpiando trayectorias inválidas", 60),
-            (velocity_calc, "Calculando cinemática", 65),
-            (threshold_calc, "Calculando umbral gaussiano", 70),
-            (rock_filter, "Filtrando por velocidad", 75),
+            (rock_filter, "Formateando trayectorias trackeadas", 70), # BYPASS APLICADO AQUÍ
             (categorizer, "Categorizando trayectorias", 80),
             (tortuosity_calc, "Calculando tortuosidad", 85),
             (origin_area_expansion, "Calculando expansión de área de origen", 90),
@@ -111,14 +120,13 @@ def run_pipeline_task(
                 json.dump(results, f, indent=4, ensure_ascii=False)
 
         # Finalización
-        final_velocity = context.get('velocity_threshold', 0.0)
-        logger.info(f"Pipeline completado con éxito. Umbral: {final_velocity:.2f} px/f")
+        logger.info("Pipeline completado con éxito (IA Smoke Filter activado).")
         
         Job.update_status(
             job_id, 
             engine, 
             is_running=False, 
-            status=f"Completado (Umbral: {final_velocity:.2f} px/f)", 
+            status="Completado (IA Activa, Velocidad Bypasseada)", 
             progress=100,
             result_file_path=output_filename,
             json_data=results

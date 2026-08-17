@@ -9,6 +9,7 @@ dependencies = [
     "h5py>=3.16.0",
     "matplotlib>=3.10.8",
     "noise>=1.2.2",
+    "onnxruntime>=1.28.0",
     "opencv-contrib-python>=4.13.0.92",
     "opencv-python>=4.13.0.92",
     "pandas>=3.0.1",

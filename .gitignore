@@ -13,3 +13,7 @@ data/
 *.html
 src/temp_videos/
 src/flyrocks.db
+temp_videos/
+flyrocks.db
+detovision_model_v18.onnx
+*.onnx
