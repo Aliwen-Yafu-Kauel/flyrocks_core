@@ -3,6 +3,8 @@ import json
 import shutil
 import asyncio
 import sys
+import uuid
+from pathlib import Path
 
 # La consola de Windows sin UTF-8 usa cp1252, que no sabe escribir los emojis
 # de nuestros `print` de progreso: el print lanza UnicodeEncodeError y, como
@@ -17,6 +19,21 @@ import sys
 #
 # En Docker no se nota porque ahi la salida ya es UTF-8; solo aparece al correr
 # el core nativo en Windows.
+import logging
+
+# El pipeline entero registra con `logger.info`, pero nadie configuraba el
+# logging: el root se queda en WARNING y esos mensajes se descartan en silencio.
+# Resultado, el nodo mas caro —el filtro de humo por IA, seis minutos de los
+# ocho que dura un analisis— era el unico del que no se veia una sola linea, ni
+# cuanto filtraba ni por donde iba. Solo se veian los `print` sueltos.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+    force=True,          # uvicorn ya instalo los suyos; este manda
+)
+
 for _flujo in (sys.stdout, sys.stderr):
     try:
         _flujo.reconfigure(encoding="utf-8", errors="replace")
@@ -49,7 +66,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="API de Análisis Flyrocks", lifespan=lifespan)
 
-app.mount("/temp_videos", StaticFiles(directory=TEMP_VIDEOS), name="temp_videos")
+class _EstaticoSinCache(StaticFiles):
+    """StaticFiles que pide revalidar siempre.
+
+    Con carpeta por job las URLs ya son unicas, asi que esto es un cinturon
+    ademas de los tirantes: si un artefacto se regenera bajo la misma ruta, el
+    navegador tiene que preguntar en vez de servir su copia. Sin esta cabecera
+    aplica cache heuristica y puede mostrar la imagen de un analisis anterior
+    sin consultar al servidor — que es exactamente como se veia el bug.
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers.setdefault("Cache-Control", "no-cache")
+        return resp
+
+
+app.mount("/temp_videos", _EstaticoSinCache(directory=TEMP_VIDEOS), name="temp_videos")
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,6 +91,44 @@ app.add_middleware(
     allow_methods=["*"],  # Permite POST, GET, OPTIONS, etc.
     allow_headers=["*"],
 )
+
+def _guardar_artefactos(carpeta: Path, job_id: str, nombre_video: str, ancla):
+    """Extrae el frame de referencia y devuelve las rutas que la vista necesita.
+
+    Las rutas son RELATIVAS a /temp_videos, que es como esta montado el estatico:
+    asi la vista arma la URL sin saber nada del disco del servidor.
+    """
+    import cv2
+
+    ruta_video = carpeta / nombre_video
+    destino = carpeta / "frame.jpg"
+    try:
+        cap = cv2.VideoCapture(str(ruta_video))
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        # Tres frames antes del primer tiro; si no hay ancla, el primero del clip
+        # (que tambien es pre-tronadura, porque el corte empieza antes).
+        objetivo = max(0, (ancla or 3) - 3)
+        if total and objetivo >= total:
+            objetivo = 0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, objetivo)
+        ok, frame = cap.read()
+        if not ok:                      # algunos codecs no aceptan el salto
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ok, frame = cap.read()
+        cap.release()
+        if ok:
+            cv2.imwrite(str(destino), frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            print(f"[frame] referencia del frame {objetivo} -> {destino.name}")
+    except Exception as e:              # no vale la pena tumbar el analisis
+        print(f"[frame] no se pudo extraer el frame de referencia: {e}")
+
+    return {
+        "carpeta": job_id,
+        "mascara": f"{job_id}/mascara_cambios.png",
+        "frame": f"{job_id}/frame.jpg" if destino.exists() else None,
+        "video": f"{job_id}/{nombre_video}",
+    }
+
 
 def _fps_de(video_path: str):
     """FPS del video, o None si no se puede leer.
@@ -113,9 +184,31 @@ async def start_analysis(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Los parámetros de zonas o matriz deben ser JSON válidos.")
 
-    # 2. Guardar el archivo de video temporalmente en disco
-    # Esto es necesario porque run_pipeline_task probablemente necesite un 'path' físico
-    video_path = f"{TEMP_VIDEOS}/{video.filename}"
+    # 2. Una CARPETA POR ANALISIS, y el video adentro.
+    #
+    # Antes todo iba junto en temp_videos/ con nombres fijos, y eso rompia dos
+    # cosas a la vez. El nodo que extrae eventos escribe su mascara en
+    # `video_path.parent / "mascara_cambios.png"`, asi que HABIA UNA SOLA
+    # mascara para toda la aplicacion: cada analisis pisaba la del anterior, y
+    # abrir un job viejo mostraba la mascara del ultimo corrido —sin error, solo
+    # una imagen que no corresponde—. Ademas el wizard sube todos los videos con
+    # el mismo nombre (`video`), asi que el segundo analisis se llevaba por
+    # delante el archivo del primero.
+    #
+    # Con una carpeta por job la mascara sigue al video sin tocar el nodo, y de
+    # paso cada artefacto tiene una URL distinta: el navegador ya no puede
+    # servir la imagen cacheada de otro analisis, que era como se veia el bug.
+    job_id = str(uuid.uuid4())
+    carpeta = Path(TEMP_VIDEOS) / job_id
+    carpeta.mkdir(parents=True, exist_ok=True)
+    nombre_video = Path(video.filename or "video").name or "video"
+    # El wizard sube el recorte con el nombre `video`, SIN extension, y el
+    # estatico adivina el tipo por la extension: sin ella lo sirve como
+    # text/plain y el <video> del navegador no lo reproduce (el fondo de video
+    # queda negro sin decir por que). Se le pone .mp4 si no trae ninguna.
+    if not Path(nombre_video).suffix:
+        nombre_video += ".mp4"
+    video_path = str(carpeta / nombre_video)
     with open(video_path, "wb") as buffer:
         shutil.copyfileobj(video.file, buffer)
 
@@ -147,8 +240,24 @@ async def start_analysis(
             "frame_inicio_corte": frame_inicio_corte,
             "ancla_frames": frame_detonacion - frame_inicio_corte,
         }
+
         print(f"[ancla] {frame_detonacion} - {frame_inicio_corte} = "
               f"{frame_detonacion - frame_inicio_corte} frames")
+
+    # El frame de referencia en color, para que la vista pueda poner las
+    # trayectorias sobre el TERRENO y no solo sobre la mascara de cambios.
+    #
+    # Se toma unos frames ANTES de la primera detonacion: ahi el terreno todavia
+    # esta limpio. El nodo BackgroundExtractor que ya existia sacaba el penultimo
+    # frame —o sea el cuadro mas tapado de polvo de todo el clip— y ademas no
+    # esta en la cadena del pipeline, asi que en la practica esta imagen nunca se
+    # generaba y el fondo "Frame pre-tronadura" salia vacio en la app.
+    #
+    # Va en JPG y no en PNG a proposito: a 4K son ~1 MB contra ~12 MB, y esto se
+    # carga por red cada vez que alguien abre la vista.
+    entrada["artefactos"] = _guardar_artefactos(
+        carpeta, job_id, nombre_video,
+        entrada.get("recorte", {}).get("ancla_frames"))
 
     # La malla de tiros, si vino el CSV. Se guardan las dos cosas a propósito:
     # el texto crudo es la fuente de verdad (pesa ~5 KB y deja el job
@@ -174,7 +283,7 @@ async def start_analysis(
             entrada["malla_error"] = str(e)
             print(f"[malla] no se pudo procesar el CSV: {e}")
     with Session(engine) as session:
-        new_job = Job(status="Iniciando...", progress=0, entrada=entrada)
+        new_job = Job(id=job_id, status="Iniciando...", progress=0, entrada=entrada)
         session.add(new_job)
         session.commit()
         session.refresh(new_job)
@@ -250,6 +359,37 @@ async def websocket_job_status(websocket: WebSocket, job_id: str):
     except Exception as e:
         print(f"❌ Error inesperado en el WebSocket: {str(e)}")
         
+@app.get("/api/jobs")
+def list_jobs(limite: int = 50):
+    """Los analisis guardados, del mas nuevo al mas viejo.
+
+    Sin esto un job solo se puede abrir si alguien anoto su id: el frontend lo
+    guarda en la memoria del navegador y no lo muestra en ninguna pantalla, asi
+    que al perderlo el analisis quedaba inalcanzable aunque el core lo tuviera
+    entero. Es lo que necesita cualquiera que quiera retomar un analisis o
+    iterar sobre uno anterior.
+
+    NO devuelve `json_data` ni `entrada` completos: la lista se pide para
+    elegir, y esos dos campos pesan del orden de un mega por job. El conteo de
+    trayectorias se hace en SQL (`json_each`) para no traerlos.
+    """
+    from sqlalchemy import text
+
+    with Session(engine) as session:
+        filas = session.execute(text("""
+            SELECT id, creado_en, status, is_running,
+                   json_extract(entrada, '$.video')             AS video,
+                   json_extract(entrada, '$.artefactos.carpeta') AS carpeta,
+                   CASE WHEN json_data IS NULL THEN 0
+                        ELSE (SELECT count(*) FROM json_each(job.json_data)) END AS trayectorias
+            FROM job
+            ORDER BY creado_en DESC, rowid DESC
+            LIMIT :limite
+        """), {"limite": limite}).mappings().all()
+
+    return [dict(f) for f in filas]
+
+
 @app.get("/api/results/{job_id}")
 def get_job_results(job_id: str):
     with Session(engine) as session:

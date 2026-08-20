@@ -34,6 +34,12 @@ RUN uv sync --frozen --no-install-project --no-dev
 # 3. Copiamos TU código
 COPY src ./src
 
+# 3b. Los pesos del filtro de humo por IA. La carpeta viaja siempre (trae su
+# README) aunque el .onnx no este: asi el build no depende de tener el modelo a
+# mano, pero la imagen lo lleva cuando si esta. Sin el, el nodo 1.5 no puede
+# cargar la sesion ONNX y el analisis falla.
+COPY modelos ./modelos
+
 # 4. Sincronizamos el proyecto final
 RUN uv sync --frozen --no-dev
 

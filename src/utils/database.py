@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import datetime
 from typing import Optional
 
 from sqlmodel import Field, SQLModel, Session, create_engine
@@ -37,6 +38,10 @@ def migrar():
     faltantes = {
         "entrada": "JSON",
         "json_data": "JSON",
+        # Sin fecha no hay forma de ordenar los analisis ni de saber cual es el
+        # ultimo: la lista de /api/jobs quedaria en orden de insercion de SQLite,
+        # que es un detalle de implementacion y no una promesa.
+        "creado_en": "TIMESTAMP",
     }
     with engine.begin() as con:
         for col, tipo in faltantes.items():
@@ -46,6 +51,7 @@ def migrar():
 
 class Job(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    creado_en: datetime = Field(default_factory=datetime.utcnow)
     is_running: bool = Field(default=True)
     status: str = Field(default="Preparando...")
     progress: int = Field(default=0) 

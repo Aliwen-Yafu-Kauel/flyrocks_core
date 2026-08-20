@@ -53,7 +53,20 @@ class AISmokeFilterNode(PipelineNode):
             return context
 
         try:
-            session = ort.InferenceSession(self.onnx_path, providers=['CPUExecutionProvider'])
+            # SIN arena de memoria. Por defecto ONNX Runtime reserva bloques y
+            # NO los devuelve entre inferencias: medido sobre este modelo, la
+            # memoria del proceso crecia 3,3 -> 4,9 -> 5,4 GB en tres pasadas y
+            # ahi se quedaba. Con 16 ventanas por clip eso mata el contenedor
+            # (OOMKilled, exit 137) incluso con 10 GB de techo.
+            #
+            # Apagarla no cambia el resultado —la salida es identica bit a bit—
+            # ni cuesta tiempo (19,8 s contra 20,2 s por inferencia): la arena
+            # ayuda cuando se reusan muchas formas distintas, y aca todas las
+            # ventanas tienen exactamente el mismo tamaño.
+            opciones = ort.SessionOptions()
+            opciones.enable_cpu_mem_arena = False
+            session = ort.InferenceSession(self.onnx_path, opciones,
+                                           providers=['CPUExecutionProvider'])
             input_name = session.get_inputs()[0].name
         except Exception as e:
             context["error"] = f"Error al cargar el modelo ONNX en {self.onnx_path}: {e}"
@@ -65,7 +78,15 @@ class AISmokeFilterNode(PipelineNode):
         
         tensor_filtrado = []
         
-        logger.info(f"[{self.name}] Ejecutando inferencia en ventanas temporales...")
+        import time
+        ventanas = len(range(0, max_t, self.avance_frames))
+        logger.info(
+            f"[{self.name}] {len(tensor):,} eventos en {max_t} frames, "
+            f"cuadro {max_x}x{max_y}. {ventanas} ventanas de "
+            f"{self.frames_contexto} frames cada {self.avance_frames}, "
+            f"umbral {self.umbral_prob}")
+        t_inicio = time.time()
+        n_ventana = 0
 
         for start_frame in range(0, max_t, self.avance_frames):
             end_frame_ctx = start_frame + self.frames_contexto
@@ -83,19 +104,39 @@ class AISmokeFilterNode(PipelineNode):
             end_frame_guardado = min(start_frame + self.avance_frames, max_t)
             puntos_app = tensor[(tensor[:, 2] >= start_frame) & (tensor[:, 2] < end_frame_guardado)]
             
-            puntos_validos = []
-            for p in puntos_app:
-                x, y = int(p[0]), int(p[1])
-                if y < prob_humo.shape[0] and x < prob_humo.shape[1]:
-                    if prob_humo[y, x] < self.umbral_prob:  
-                        puntos_validos.append(p)
-                        
-            tensor_filtrado.extend(puntos_validos)
-            
-        tensor_final = np.array(tensor_filtrado) if tensor_filtrado else np.empty((0, 4))
+            # Vectorizado y por BLOQUES, no punto a punto. El bucle Python
+            # equivalente recorria decenas de millones de eventos uno a uno, y
+            # cada punto guardado quedaba como un array numpy propio: medido,
+            # 137 bytes por punto contra 32 del bloque contiguo. Con ~35 M de
+            # eventos son ~4,8 GB solo en esa lista, y sumados al tensor de
+            # entrada, al modelo y a la inferencia, el contenedor moria por
+            # falta de memoria (OOMKilled, exit 137) sin llegar a terminar.
+            # El criterio de filtrado es el mismo.
+            xs = puntos_app[:, 0].astype(np.intp)
+            ys = puntos_app[:, 1].astype(np.intp)
+            dentro = (ys < prob_humo.shape[0]) & (xs < prob_humo.shape[1])
+            conservar = np.zeros(len(puntos_app), dtype=bool)
+            conservar[dentro] = prob_humo[ys[dentro], xs[dentro]] < self.umbral_prob
+            if conservar.any():
+                tensor_filtrado.append(puntos_app[conservar])
+
+            n_ventana += 1
+            vivos, total_v = int(conservar.sum()), len(puntos_app)
+            logger.info(
+                f"[{self.name}] ventana {n_ventana}/{ventanas} "
+                f"(frames {start_frame}-{end_frame_ctx}): "
+                f"{total_v:,} pts -> {vivos:,} ({vivos/max(total_v,1)*100:.0f}% "
+                f"conservado) | {time.time() - t_inicio:.0f}s acumulados")
+
+        tensor_final = (np.concatenate(tensor_filtrado) if tensor_filtrado
+                        else np.empty((0, 4)))
         
         retencion = (len(tensor_final) / len(tensor)) * 100 if len(tensor) > 0 else 0
-        logger.info(f"[{self.name}] Filtrado completado. Se conservaron {len(tensor_final)} pts ({retencion:.1f}%).")
+        logger.info(
+            f"[{self.name}] LISTO en {time.time() - t_inicio:.0f}s: "
+            f"{len(tensor):,} -> {len(tensor_final):,} pts "
+            f"({retencion:.1f}% conservado, {100-retencion:.1f}% descartado "
+            f"como humo)")
         
         context["tensor_raw"] = tensor_final
         return context

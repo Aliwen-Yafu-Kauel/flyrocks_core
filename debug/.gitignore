@@ -22,10 +22,16 @@ casos/
 
 # Presentaciones: 72 MB de pptx y jpg. Son entregables de reunion, no fuentes,
 # y en git quedarian para siempre. El generador (build_ppt.py) si se versiona.
-ppt/*.pptx
-ppt/_assets/
-ppt/*.jpg
-ppt/*.png
+# La carpeta del PPT ENTERA. Antes se ignoraba por extensiones y por eso se
+# colaban datos del cliente que no son codigo (los CSV de secuencia de otras
+# tronaduras). Son 2,7 GB de presentaciones, videos y capturas: material de
+# trabajo, no producto.
+ppt/
 
 # El visor SI va, aunque el .gitignore raiz excluya *.html: es el entregable.
 # Se agrego con `git add -f`.
+
+# Material de trabajo que no es codigo: planillas de seguimiento y notas
+# sueltas. Se quedan en el disco de quien las use, no en el repo del producto.
+*.xlsx
+chat*.txt

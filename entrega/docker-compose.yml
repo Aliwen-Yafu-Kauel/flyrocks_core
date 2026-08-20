@@ -53,6 +53,15 @@ services:
       # nadie los borra: sin techo, la carpeta crece sin limite en la maquina
       # del cliente. Con 0 no se purga nunca.
       CACHE_MAX_MB: "2048"
+      # Pesos del filtro de humo por IA. Viajan dentro de la imagen (los copia
+      # el Dockerfile desde flyrocks_core/modelos/). Apuntar a otra ruta solo
+      # hace falta para probar una version distinta del modelo.
+      MODELO_ONNX: "modelos/detovision_model_v18.onnx"
+      # Apagar el filtro de humo por IA con "0". El pipeline vuelve al camino
+      # clasico (cinematica + umbral gaussiano + filtro de velocidad): tarda ~2
+      # minutos en vez de ~8, cabe en equipos con menos memoria y sirve para
+      # iterar en las vistas o si el modelo no esta disponible.
+      IA_ACTIVA: "1"
     volumes:
       - core_data:/app/data
     networks:

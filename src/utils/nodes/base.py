@@ -51,6 +51,16 @@ CACHE_DIR = Path(os.getenv("DATA_DIR", "data")) / "cache"
 CACHE_MAX_MB = float(os.getenv("CACHE_MAX_MB", "2048"))
 
 
+def _memoria_mb() -> float:
+    """Memoria residente del proceso, en MB. Sin dependencias nuevas: en Linux
+    sale de /proc, que es donde corre el contenedor."""
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1e6
+    except Exception:
+        return 0.0
+
+
 def _hash_json(obj: Any) -> str:
     """Hash estable de cualquier cosa serializable a JSON."""
     return hashlib.sha256(
@@ -323,6 +333,11 @@ def ejecutar(nodes: List[PipelineNode], context: Dict[str, Any],
 
         if CACHE_ACTIVA and node.cacheable:
             _escribir(CACHE_DIR / f"{llaves[i]}.pkl", context)
+
+        # Cuanta memoria dejo cada nodo. Sin esto, un OOM en la maquina del
+        # cliente es un contenedor que muere sin decir por que; con esto se ve
+        # que nodo lo hizo crecer y con cuanto margen quedo.
+        logger.info(f"[pipeline] {node.name}: {_memoria_mb():.0f} MB en uso")
 
     # Al final y no al arrancar: asi lo que se acaba de calcular ya cuenta, y
     # una purga lenta no retrasa el primer nodo. Que falle no puede costar el
