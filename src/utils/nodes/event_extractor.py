@@ -84,6 +84,16 @@ class EventExtractorNode(PipelineNode):
                 previous_gray = current_gray
                 frame_index += 1
 
+            # --- MEJORA VISUAL: Traslación Aditiva Alpha ---
+            v_max = int(np.max(max_change_mask))
+            if v_max > 0:
+                alpha = 255 - v_max
+                mask_activa = max_change_mask > 0
+                max_change_mask[mask_activa] = np.clip(
+                    max_change_mask[mask_activa].astype(np.uint16) + alpha, 0, 255
+                ).astype(np.uint8)
+                logger.info(f"[{self.name}] Máscara mejorada con traslación alpha={alpha}")
+
             # Guardar en disco y añadir al contexto
             mask_path = video_path.parent / self.output_mask_filename
             cv2.imwrite(str(mask_path), max_change_mask)
