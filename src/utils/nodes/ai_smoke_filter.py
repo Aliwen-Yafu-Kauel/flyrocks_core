@@ -1,7 +1,9 @@
 import numpy as np
 import cv2
 import logging
+import gc
 import onnxruntime as ort
+import time
 from typing import Any, Dict
 
 from .base import PipelineNode
@@ -42,9 +44,15 @@ class AISmokeFilterNode(PipelineNode):
         logits = session.run(None, {input_name: input_tensor})[0][0]
         logits_cropped = logits[:, :img_h, :img_w]
         
-        exp_logits = np.exp(logits_cropped - np.max(logits_cropped, axis=0, keepdims=True))
-        probabilidades = exp_logits / np.sum(exp_logits, axis=0, keepdims=True)
-        return probabilidades[1, :, :] # Retorna la capa de la clase 1 (Humo)
+        # NUESTRA OPTIMIZACIÓN: Matemática In-place para no duplicar matrices pesadas en RAM
+        max_logits = np.max(logits_cropped, axis=0, keepdims=True)
+        logits_cropped -= max_logits 
+        np.exp(logits_cropped, out=logits_cropped)
+        sum_exp = np.sum(logits_cropped, axis=0, keepdims=True)
+        logits_cropped /= sum_exp 
+        
+        prob_humo = logits_cropped[1, :, :].copy() 
+        return prob_humo
 
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
         tensor = context.get("tensor_raw")
@@ -53,16 +61,7 @@ class AISmokeFilterNode(PipelineNode):
             return context
 
         try:
-            # SIN arena de memoria. Por defecto ONNX Runtime reserva bloques y
-            # NO los devuelve entre inferencias: medido sobre este modelo, la
-            # memoria del proceso crecia 3,3 -> 4,9 -> 5,4 GB en tres pasadas y
-            # ahi se quedaba. Con 16 ventanas por clip eso mata el contenedor
-            # (OOMKilled, exit 137) incluso con 10 GB de techo.
-            #
-            # Apagarla no cambia el resultado —la salida es identica bit a bit—
-            # ni cuesta tiempo (19,8 s contra 20,2 s por inferencia): la arena
-            # ayuda cuando se reusan muchas formas distintas, y aca todas las
-            # ventanas tienen exactamente el mismo tamaño.
+            # SIN arena de memoria. (Comentario del equipo conservado)
             opciones = ort.SessionOptions()
             opciones.enable_cpu_mem_arena = False
             session = ort.InferenceSession(self.onnx_path, opciones,
@@ -74,11 +73,10 @@ class AISmokeFilterNode(PipelineNode):
 
         max_x = int(np.max(tensor[:, 0])) + 1
         max_y = int(np.max(tensor[:, 1])) + 1
-        max_t = int(np.max(tensor[:, 2])) + 1 # FIX: +1 para no perder el último frame
+        max_t = int(np.max(tensor[:, 2])) + 1 
         
         tensor_filtrado = []
         
-        import time
         ventanas = len(range(0, max_t, self.avance_frames))
         logger.info(
             f"[{self.name}] {len(tensor):,} eventos en {max_t} frames, "
@@ -99,34 +97,40 @@ class AISmokeFilterNode(PipelineNode):
             
             img_intensidad = cv2.normalize(canvas, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             
+            # NUESTRA OPTIMIZACIÓN: Borramos el canvas 4K pesado antes de inferir
+            del canvas
+            
             prob_humo = self._obtener_probabilidad_humo(session, input_name, img_intensidad)
             
             end_frame_guardado = min(start_frame + self.avance_frames, max_t)
             puntos_app = tensor[(tensor[:, 2] >= start_frame) & (tensor[:, 2] < end_frame_guardado)]
             
-            # Vectorizado y por BLOQUES, no punto a punto. El bucle Python
-            # equivalente recorria decenas de millones de eventos uno a uno, y
-            # cada punto guardado quedaba como un array numpy propio: medido,
-            # 137 bytes por punto contra 32 del bloque contiguo. Con ~35 M de
-            # eventos son ~4,8 GB solo en esa lista, y sumados al tensor de
-            # entrada, al modelo y a la inferencia, el contenedor moria por
-            # falta de memoria (OOMKilled, exit 137) sin llegar a terminar.
-            # El criterio de filtrado es el mismo.
-            xs = puntos_app[:, 0].astype(np.intp)
-            ys = puntos_app[:, 1].astype(np.intp)
-            dentro = (ys < prob_humo.shape[0]) & (xs < prob_humo.shape[1])
-            conservar = np.zeros(len(puntos_app), dtype=bool)
-            conservar[dentro] = prob_humo[ys[dentro], xs[dentro]] < self.umbral_prob
-            if conservar.any():
-                tensor_filtrado.append(puntos_app[conservar])
+            # OPTIMIZACIÓN DEL EQUIPO: Vectorización con validación de límites (dentro)
+            if len(puntos_app) > 0:
+                xs = puntos_app[:, 0].astype(np.intp)
+                ys = puntos_app[:, 1].astype(np.intp)
+                dentro = (ys < prob_humo.shape[0]) & (xs < prob_humo.shape[1])
+                conservar = np.zeros(len(puntos_app), dtype=bool)
+                conservar[dentro] = prob_humo[ys[dentro], xs[dentro]] < self.umbral_prob
+                if conservar.any():
+                    tensor_filtrado.append(puntos_app[conservar])
 
+                vivos = int(conservar.sum())
+            else:
+                vivos = 0
+                
+            total_v = len(puntos_app)
             n_ventana += 1
-            vivos, total_v = int(conservar.sum()), len(puntos_app)
+            
             logger.info(
                 f"[{self.name}] ventana {n_ventana}/{ventanas} "
                 f"(frames {start_frame}-{end_frame_ctx}): "
                 f"{total_v:,} pts -> {vivos:,} ({vivos/max(total_v,1)*100:.0f}% "
                 f"conservado) | {time.time() - t_inicio:.0f}s acumulados")
+
+            # NUESTRA OPTIMIZACIÓN: Forzamos la limpieza agresiva en Docker
+            del img_intensidad, prob_humo, puntos_ctx, puntos_app
+            gc.collect()
 
         tensor_final = (np.concatenate(tensor_filtrado) if tensor_filtrado
                         else np.empty((0, 4)))
@@ -139,4 +143,8 @@ class AISmokeFilterNode(PipelineNode):
             f"como humo)")
         
         context["tensor_raw"] = tensor_final
+        
+        del session
+        gc.collect()
+        
         return context
