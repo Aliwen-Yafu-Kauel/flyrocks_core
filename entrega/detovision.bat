@@ -75,71 +75,17 @@ if %errorlevel% neq 0 (
 
 :: 2b. Comprobar que Docker tiene memoria suficiente.
 ::
-:: El filtro de humo por IA necesita ~8 GB de pico, y WSL2 le da a Docker la
-:: MITAD de la RAM del equipo por defecto. En un PC de 16 GB eso son 8 GB
-:: compartidos con todo lo demas: el analisis muere a mitad de camino con
-:: "exit 137" y parece que la aplicacion esta rota. Se avisa ANTES de empezar.
-echo [2b/5] Comprobando memoria disponible para Docker...
-set "RAM_GB="
-for /f %%r in ('powershell -NoProfile -Command "$b=(Get-CimInstance Win32_ComputerSystem -EA SilentlyContinue).TotalPhysicalMemory; if(-not $b){$b=(Get-WmiObject Win32_ComputerSystem -EA SilentlyContinue).TotalPhysicalMemory}; if($b){[int]($b/1GB)}else{0}" 2^>nul') do set "RAM_GB=%%r"
-
-if "%RAM_GB%"=="" set "RAM_GB=0"
-if "%RAM_GB%"=="0" (
-    echo [AVISO] No se pudo leer la memoria del equipo. Si el analisis se corta
-    echo         solo, revisa el archivo de instrucciones: hace falta que Docker
-    echo         tenga al menos 10 GB.
-    goto :FIN_RAM
-)
-echo        Este equipo tiene %RAM_GB% GB de RAM.
-
-if %RAM_GB% LSS 12 (
-    echo.
-    echo [AVISO] Con %RAM_GB% GB el analisis con IA puede no completarse.
-    echo         Recomendado: 16 GB o mas. Puedes continuar, pero si el proceso
-    echo         se corta solo, esa es la razon.
-    echo.
-    pause
-    goto :FIN_RAM
-)
-
-:: Con 24 GB o mas, la mitad que WSL asigna por defecto ya supera los 10 GB.
-if %RAM_GB% GEQ 24 (
-    echo        [OK] La asignacion por defecto de Docker es suficiente.
-    goto :FIN_RAM
-)
-
-findstr /I /C:"memory=10GB" "%USERPROFILE%\.wslconfig" >nul 2>&1
-if %errorlevel%==0 (
-    echo        [OK] Docker ya esta configurado con 10 GB.
-    goto :FIN_RAM
-)
-
-echo.
-echo        Docker necesita 10 GB y en este equipo tomaria solo la mitad de la
-echo        RAM. Se puede configurar automaticamente; el archivo anterior, si
-echo        existe, se guarda como .wslconfig.bak
-echo.
-set "AJUSTAR="
-set /p AJUSTAR="        Configurar Docker con 10 GB ahora? (S/N): "
-if /i not "%AJUSTAR%"=="S" (
-    echo        Se continua sin cambiar nada.
-    goto :FIN_RAM
-)
-
-if exist "%USERPROFILE%\.wslconfig" copy /Y "%USERPROFILE%\.wslconfig" "%USERPROFILE%\.wslconfig.bak" >nul
-(
-    echo [wsl2]
-    echo memory=10GB
-    echo swap=4GB
-) > "%USERPROFILE%\.wslconfig"
-echo        [OK] Configurado. Reiniciando Docker para aplicarlo...
-wsl --shutdown >nul 2>&1
-timeout /t 5 /nobreak >nul
-start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-echo        Esperando a que Docker vuelva (40 s)...
-timeout /t 40 /nobreak >nul
-
-:FIN_RAM
+:: Va en una SUBRUTINA (`call`) y no en linea. La primera version usaba
+:: `goto :FIN_RAM` desde dentro de los bloques `if (...)`, y en el equipo del
+:: cliente eso reventaba con «El sistema no encuentra la etiqueta por lotes
+:: especificada: FIN_RAM» — la etiqueta existia y el mismo archivo funcionaba
+:: en la maquina de desarrollo, asi que depende del entorno (ruta, version de
+:: cmd, como se lanzo el .bat) y no del texto del script.
+::
+:: Dentro de una subrutina se sale con `exit /b`, que NO busca ninguna
+:: etiqueta: no hay nada que encontrar y no hay como fallar. De paso el bloque
+:: queda aislado del resto del menu.
+call :CHEQUEAR_RAM
 echo.
 
 :: 3. Entrar a la carpeta y limpiar ejecuciones viejas
@@ -267,3 +213,74 @@ cls
 echo Gracias por usar el gestor. Saliendo...
 timeout /t 2 >nul
 exit
+
+:: ---------------------------------------------------------------------------
+:: Subrutinas. Van DESPUES de :SALIR, que termina con `exit`: asi el flujo
+:: normal del menu nunca cae aca por accidente.
+:: ---------------------------------------------------------------------------
+
+:CHEQUEAR_RAM
+:: El filtro de humo por IA necesita ~8 GB de pico, y WSL2 le da a Docker la
+:: MITAD de la RAM del equipo por defecto. En un PC de 16 GB eso son 8 GB
+:: compartidos con todo lo demas: el analisis muere a mitad de camino con
+:: "exit 137" y parece que la aplicacion esta rota. Se avisa ANTES de empezar.
+echo [2b/5] Comprobando memoria disponible para Docker...
+set "RAM_GB="
+for /f %%r in ('powershell -NoProfile -Command "$b=(Get-CimInstance Win32_ComputerSystem -EA SilentlyContinue).TotalPhysicalMemory; if(-not $b){$b=(Get-WmiObject Win32_ComputerSystem -EA SilentlyContinue).TotalPhysicalMemory}; if($b){[int]($b/1GB)}else{0}" 2^>nul') do set "RAM_GB=%%r"
+
+if "%RAM_GB%"=="" set "RAM_GB=0"
+if "%RAM_GB%"=="0" (
+    echo [AVISO] No se pudo leer la memoria del equipo. Si el analisis se corta
+    echo         solo, revisa el archivo de instrucciones: hace falta que Docker
+    echo         tenga al menos 10 GB.
+    exit /b 0
+)
+echo        Este equipo tiene %RAM_GB% GB de RAM.
+
+if %RAM_GB% LSS 12 (
+    echo.
+    echo [AVISO] Con %RAM_GB% GB el analisis con IA puede no completarse.
+    echo         Recomendado: 16 GB o mas. Puedes continuar, pero si el proceso
+    echo         se corta solo, esa es la razon.
+    echo.
+    pause
+    exit /b 0
+)
+
+:: Con 24 GB o mas, la mitad que WSL asigna por defecto ya supera los 10 GB.
+if %RAM_GB% GEQ 24 (
+    echo        [OK] La asignacion por defecto de Docker es suficiente.
+    exit /b 0
+)
+
+findstr /I /C:"memory=10GB" "%USERPROFILE%\.wslconfig" >nul 2>&1
+if %errorlevel%==0 (
+    echo        [OK] Docker ya esta configurado con 10 GB.
+    exit /b 0
+)
+
+echo.
+echo        Docker necesita 10 GB y en este equipo tomaria solo la mitad de la
+echo        RAM. Se puede configurar automaticamente; el archivo anterior, si
+echo        existe, se guarda como .wslconfig.bak
+echo.
+set "AJUSTAR="
+set /p AJUSTAR="        Configurar Docker con 10 GB ahora? (S/N): "
+if /i not "%AJUSTAR%"=="S" (
+    echo        Se continua sin cambiar nada.
+    exit /b 0
+)
+
+if exist "%USERPROFILE%\.wslconfig" copy /Y "%USERPROFILE%\.wslconfig" "%USERPROFILE%\.wslconfig.bak" >nul
+(
+    echo [wsl2]
+    echo memory=10GB
+    echo swap=4GB
+) > "%USERPROFILE%\.wslconfig"
+echo        [OK] Configurado. Reiniciando Docker para aplicarlo...
+wsl --shutdown >nul 2>&1
+timeout /t 5 /nobreak >nul
+start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+echo        Esperando a que Docker vuelva (40 s)...
+timeout /t 40 /nobreak >nul
+exit /b 0

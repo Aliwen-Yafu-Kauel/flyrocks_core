@@ -116,6 +116,14 @@
   /* ---------- cuerpo: lienzo + panel ---------- */
   #cuerpo{flex:1 1 auto; display:flex; min-height:0}
   #lienzo{position:relative; flex:1 1 auto; overflow:hidden; min-width:0}
+  /* Aviso efimero (deshacer). Abajo y al centro: fuera del alcance del panel y
+     de la barra, para no tapar lo que se acaba de editar. */
+  #aviso{position:absolute; left:50%; bottom:18px; transform:translateX(-50%);
+         background:rgba(20,22,26,.92); border:1px solid #3a3f47; color:#e8eaed;
+         padding:7px 14px; border-radius:6px; font-size:13px; pointer-events:none;
+         opacity:0; transition:opacity .18s; z-index:5; white-space:nowrap}
+  #aviso.ver{opacity:1}
+  #btnDeshacer:disabled{opacity:.4; cursor:default}
   canvas{display:block; position:absolute; top:0; left:0}
   #cz{cursor:crosshair}
   body.paneando #cz{cursor:grabbing}
@@ -209,9 +217,9 @@
   </div>
 
   <div class="grupo">
-    <label>Opacidad</label>
-    <input type="range" id="opFondo" min="0" max="1" step="0.05" value="0.75">
-    <span class="val" id="vOpFondo">.75</span>
+    <label title="Baja las trayectorias para comparar con el fondo: a 0 quedan solo la máscara o el video, sin trazos encima.">Opacidad trazos</label>
+    <input type="range" id="opFondo" min="0" max="1" step="0.05" value="1">
+    <span class="val" id="vOpFondo">1.00</span>
   </div>
 
   <div class="sep"></div>
@@ -223,6 +231,8 @@
     <button id="btnDibujar">Dibujar trayectoria</button>
     <button id="btnLazo" title="Rodea trayectorias para descartarlas en masa (L). Por defecto solo agarra las que quedan ENTERAS dentro; con Alt agarra las que apenas tocan. Con Shift restaura en vez de descartar.">Lazo</button>
     <button id="btnUnir" title="Une dos trayectorias partidas por sus extremos (U). Selecciona una, activa Unir y haz clic en la otra.">Unir</button>
+    <button id="btnRecorte" title="Rodea el TRAMO malo de una trayectoria y se borra solo ese pedazo (R): el resto sigue vivo como trayectoria nueva. Sirve igual para cortar una cola o un zigzag del medio. La original queda descartada, no se pierde.">Recortar</button>
+    <button id="btnDeshacer" disabled title="Nada que deshacer (Ctrl+Z)">↶ Deshacer</button>
   </div>
 
   <div class="sep"></div>
@@ -304,6 +314,7 @@
   <div id="lienzo">
     <canvas id="cf"></canvas>
     <canvas id="cz"></canvas>
+    <div id="aviso"></div>
     <div id="suelta"><div class="caja">
       <h2>No se pudo cargar el caso</h2>
       <p>Esta vista necesita servidor: con <code>file://</code> el navegador bloquea la carga.</p>
@@ -446,7 +457,11 @@ const F = {
 };
 
 const U = {
-  fondo: "mascara", opFondo: 0.75,
+  // Opacidad de LOS TRAZOS, no del fondo. Antes este control atenuaba la
+  // mascara, que no le servia a nadie: lo que uno quiere al comparar es bajar
+  // las trayectorias y ver que hay debajo —si por ahi paso una roca de verdad o
+  // es humo—, no lavar la imagen contra la que esta comparando.
+  fondo: "mascara", opTraz: 1,
   malla: false, zonas: false, escape: false,
   sel: -1, dibujando: false, lazo: false, uniendo: false,
 };
@@ -455,7 +470,7 @@ const U = {
 // si el usuario hace zoom o desplaza a mitad del trazo, el lazo sigue rodeando
 // lo mismo. `n` es el conteo en vivo, para que se vea a cuántas va a agarrar
 // ANTES de soltar.
-const LAZO = { pts: [], n: 0, tocar: false, restaurar: false };
+const LAZO = { pts: [], n: 0, tocar: false, restaurar: false, recorte: false };
 
 // Trazo en construccion: p0 -> p2 -> se curva moviendo el control.
 let NUEVO = null;
@@ -816,6 +831,47 @@ function cargarImg(url){
 // no recorrer 15.772 puntos por frame de pan.
 function prepararTrayectorias(){
   for (const T of C.proyecciones) preparar(T);
+  asegurarOrigenMundo();
+}
+
+// Las isolineas de escape necesitan el area de origen EN METROS, para poder
+// separarse del borde una distancia en metros. Solo `caso_export.py` la
+// guardaba: los casos congelados desde un job y la app en vivo mandan
+// `origen_mundo: null`, asi que el boton Escape no pintaba nada —sin error, sin
+// aviso, simplemente no aparecia—. Aca se deriva del poligono en pixeles, que
+// esos si lo traen siempre.
+function asegurarOrigenMundo(){
+  const z = C.zonas;
+  if (!z || (z.origen_mundo && z.origen_mundo.length)) return;
+  if (!z.origen || z.origen.length < 3) return;
+  // Hace falta la afin de la malla para pasar de pixeles a metros de mina.
+  const m = C.malla && C.malla.meta;
+  if (!m || !m.A || !m.t) return;
+  const hull = hullDe(z.origen.map(p => ({ x: p[0], y: p[1] })));
+  if (hull.length < 3) return;
+  // `pxAMundo` ya devuelve el par [x, y] en metros de mina.
+  z.origen_mundo = hull.map(pxAMundo);
+  console.info("[flyrocks] origen_mundo derivado de las zonas en pixeles",
+               { puntos: z.origen_mundo.length });
+}
+
+// Envolvente convexa (monotone chain). El offset de las isolineas asume un
+// poligono convexo, y el area de origen que dibuja el usuario no tiene por que
+// serlo.
+function hullDe(pts){
+  const p = [...pts].sort((a, b) => a.x - b.x || a.y - b.y);
+  if (p.length < 3) return p;
+  const cruz = (o, a, b) => (a.x-o.x)*(b.y-o.y) - (a.y-o.y)*(b.x-o.x);
+  const media = (arr) => {
+    const r = [];
+    for (const q of arr){
+      while (r.length >= 2 && cruz(r[r.length-2], r[r.length-1], q) <= 0) r.pop();
+      r.push(q);
+    }
+    r.pop();
+    return r;
+  };
+  return media(p).concat(media(p.reverse()));
 }
 
 // Rasteriza la curva manual a la MISMA forma que traen las del pipeline (lista
@@ -936,13 +992,23 @@ function recalcular(){
     if (T.estado === "descartada"){ cuenta.descartada++; continue; }
 
     let razon = null;
-    if (!F.clases[T.clasificacion]) razon = "clase";
-    else if (T.fuente !== "manual"){
-      // Los filtros de calidad describen la DETECCION automatica: tortuosidad,
-      // R2 y escape los calcula el tracker. Una curva dibujada a mano no tiene
-      // esas metricas (lleva valores de relleno), asi que filtrarla por ellas
-      // solo consigue que desaparezca lo que acabas de dibujar.
-      if (T.n < F.len)                          razon = "largo";
+    // LO TOCADO A MANO NO PASA POR LOS FILTROS.
+    //
+    // Los filtros describen la calidad de la DETECCION automatica: largo,
+    // tortuosidad, R2 y escape los calcula el tracker sobre lo que vio. Una
+    // trayectoria que alguien corrigio a mano ya paso por el juicio de una
+    // persona, que es mas fuerte que cualquier umbral: volver a filtrarla solo
+    // consigue que desaparezca justo lo que se acaba de arreglar.
+    //
+    // Ademas sus metricas no significan lo mismo. Una curva dibujada a mano
+    // lleva valores de relleno (tortuosidad 1, R2 1) y una unida hereda los
+    // valores conservadores de sus dos tramos, asi que compararlas contra los
+    // mismos umbrales que una deteccion cruda no tiene sentido.
+    //
+    // Para sacarlas hay que descartarlas a mano, que es explicito y reversible.
+    if (!esAMano(T)){
+      if (!F.clases[T.clasificacion])           razon = "clase";
+      else if (T.n < F.len)                     razon = "largo";
       else if (num(T.tortuosidad) > F.tor)      razon = "tortuosidad";
       else if (num(T.escape_relativo) < F.esc)  razon = "escape";
       else if (num(T.r2_score) < F.r2)          razon = "r2";
@@ -961,6 +1027,12 @@ function recalcular(){
 }
 
 const num = (v) => (v === null || v === undefined || !isFinite(v)) ? 0 : v;
+
+// Todo lo que paso por las manos de alguien: dibujado, unido o (cuando exista)
+// recortado. Una sola definicion para que agregar una herramienta de edicion
+// nueva no obligue a acordarse de tocar el filtro.
+const A_MANO = ["manual", "unida", "recorte"];
+const esAMano = (T) => A_MANO.includes(T.fuente);
 
 function pintarCuentas(cuenta, razones){
   const P = C.proyecciones;
@@ -1087,6 +1159,30 @@ function tangenteInicial(T){
   return { x: vx, y: vy, n: M, fiable: T.n >= A.nMin };
 }
 
+// La tangente de SALIDA: por donde se va la roca al final del tramo. Es lo que
+// faltaba para empalmar dos fragmentos por una curva y no por una recta.
+//
+// No repite el PCA: le da la vuelta a los puntos y reusa `tangenteInicial`, que
+// ya resuelve el ruido frame a frame. Asi las dos tangentes salen del MISMO
+// criterio —si algun dia se afina el ajuste, se afina para las dos— y no hay
+// una segunda copia de la misma matematica que se pueda desincronizar.
+function tangenteFinal(T){
+  if (T.bezier){
+    const B = T.bezier;
+    const ref = B.c2 || B.c1;
+    const d = { x: B.p2.x - ref.x, y: B.p2.y - ref.y };
+    const n = Math.hypot(d.x, d.y);
+    return n > 1e-6 ? { x: d.x / n, y: d.y / n, n: T.n, fiable: true } : null;
+  }
+  const p = T.puntos;
+  if (!p || p.length < 4) return null;
+  const r = [];
+  for (let k = p.length - 2; k >= 0; k -= 2) r.push(p[k], p[k+1]);
+  const tg = tangenteInicial({ puntos: r, n: T.n });
+  // Invertida apunta hacia atras; negarla la deja en el sentido del vuelo.
+  return tg ? { x: -tg.x, y: -tg.y, n: tg.n, fiable: tg.fiable } : null;
+}
+
 function asociar(T){
   if (!C.malla.pozos.length) return [];
   const tg = tangenteInicial(T);
@@ -1182,6 +1278,169 @@ function tramoOrigen(T, iPozo){
            Cc: { x: T.p0.x - tg.x * L * 0.5, y: T.p0.y - tg.y * L * 0.5 } };
 }
 
+// El empalme entre dos fragmentos de un mismo vuelo.
+//
+// Unir en LINEA RECTA es visualmente falso: entre los dos tramos la roca siguio
+// volando, y la recta corta por dentro justo en el punto alto —que es el de
+// mayor alcance, el numero que le importa al cliente—. La cuerda subestima.
+//
+// Es el mismo criterio que ya usa `tramoOrigen` para el tramo pozo -> traza,
+// pero con LAS DOS tangentes: la de salida del primer fragmento y la de entrada
+// del segundo. Una cubica de Bezier con los tiradores sobre esas dos direcciones
+// entra y sale sin quiebre, que es lo que hace que las dos piezas se lean como
+// una sola.
+//
+// Se ajusta sobre los puntos reales de los dos fragmentos y NO se impone una
+// parabola teorica: el dron no es perfectamente cenital, asi que lo que se ve en
+// pantalla es una conica proyectada (ver PARABOLAS.md) y la parabola de libro
+// no calza. Las tangentes medidas si.
+//
+// `k` = cuantos puntos generar. Con eje temporal es el numero de frames que
+// faltan, para que la traza unida mantenga UN punto por frame como el resto.
+// La tangente EN EL EXTREMO, no la direccion media del tramo.
+//
+// `tangenteInicial` ajusta una RECTA (PCA) sobre el tramo inicial. Para asociar
+// al pozo sirve —lo que importa ahi es de donde viene la roca, en promedio—,
+// pero para empalmar no: sobre una curva, la direccion media de un tramo NO es
+// la tangente en su punta, y el sesgo es sistematico. Medido sobre un vuelo
+// sintetico da 12-18 grados, que es lo que dejaba el empalme a 2-6 px de la
+// parabola real aunque la construccion de la curva fuera exacta.
+//
+// Aca se ajusta una CUADRATICA por minimos cuadrados y se evalua su derivada
+// justo en el punto extremo. Una parabola se reproduce sin sesgo por
+// construccion, y como sigue siendo un ajuste sobre varios puntos, el ruido de
+// deteccion frame a frame se promedia igual que antes.
+function tangenteExtremo(T, alFinal){
+  if (T.bezier) return alFinal ? tangenteFinal(T) : tangenteInicial(T);
+  const p = T.puntos, N = T.n;
+  if (!p || N < 4) return alFinal ? tangenteFinal(T) : tangenteInicial(T);
+
+  // Cuantos puntos mirar: TODO el tramo, hasta ~200 px de recorrido.
+  //
+  // La recta del PCA tiene que quedarse en un pedazo corto porque mas alla la
+  // curvatura la sesga. La cuadratica no: modela la curvatura, asi que estirar
+  // la ventana solo le baja el ruido. Barrido sobre vuelo sintetico, sesgo medio
+  // de la tangente con ruido de 4 px: 68 grados mirando 30 px, 57 mirando 60,
+  // 19 mirando 150 y 3,5 mirando el tramo entero. Con las trazas reales —largo
+  // mediano de 21 a 29 puntos— el tramo entero cae casi siempre bajo el tope.
+  //
+  // El tope existe igual: en un vuelo muy largo la traza deja de ser una sola
+  // parabola (el dron no es cenital y la proyeccion cambia con la altura), y ahi
+  // ajustar de punta a punta volveria a meter sesgo de modelo.
+  let M = 1, largo = 0;
+  const en = (i) => alFinal ? (N - 1 - i) : i;
+  while (M < N - 1 && (M < 4 || largo < 200)){
+    const a = en(M), b = en(M - 1);
+    largo += Math.hypot(p[2*a] - p[2*b], p[2*a+1] - p[2*b+1]);
+    M++;
+  }
+  M = Math.max(4, Math.min(N, M + 1));
+
+  // u = 0 en el extremo y crece hacia adentro, asi la derivada se evalua en 0.
+  let S0=0,S1=0,S2=0,S3=0,S4=0, X0=0,X1=0,X2=0, Y0=0,Y1=0,Y2=0;
+  for (let i = 0; i < M; i++){
+    const j = en(i), u = i, u2 = u*u;
+    const x = p[2*j], y = p[2*j+1];
+    S0+=1; S1+=u; S2+=u2; S3+=u2*u; S4+=u2*u2;
+    X0+=x; X1+=x*u; X2+=x*u2;
+    Y0+=y; Y1+=y*u; Y2+=y*u2;
+  }
+  // Sistema normal 3x3 por Cramer. c1 es la derivada en u=0, que es lo unico
+  // que hace falta: el termino independiente y la curvatura no se usan.
+  const det3 = (a,b,c,d,e,f,g,h,i) =>
+    a*(e*i-f*h) - b*(d*i-f*g) + c*(d*h-e*g);
+  const D = det3(S0,S1,S2, S1,S2,S3, S2,S3,S4);
+  if (Math.abs(D) < 1e-9) return alFinal ? tangenteFinal(T) : tangenteInicial(T);
+  const dx = det3(S0,X0,S2, S1,X1,S3, S2,X2,S4) / D;
+  const dy = det3(S0,Y0,S2, S1,Y1,S3, S2,Y2,S4) / D;
+
+  // u crece hacia ADENTRO del tramo, asi que en el extremo final la derivada
+  // apunta al reves del vuelo: hay que darla vuelta.
+  let vx = alFinal ? -dx : dx, vy = alFinal ? -dy : dy;
+  const n = Math.hypot(vx, vy);
+  if (!(n > 1e-9)) return alFinal ? tangenteFinal(T) : tangenteInicial(T);
+  return { x: vx/n, y: vy/n, n: M, fiable: N >= A.nMin };
+}
+
+function curvaEmpalme(Ta, Tb, k){
+  const tgA = tangenteExtremo(Ta, true), tgB = tangenteExtremo(Tb, false);
+  if (!tgA || !tgB) return null;
+  const P0 = Ta.pf, P3 = Tb.p0;
+  const L = Math.hypot(P3.x - P0.x, P3.y - P0.y);
+  if (!(L > 1e-6)) return null;
+
+  // El punto de control es la INTERSECCION DE LAS DOS TANGENTES, no un tirador
+  // a ojo sobre la cuerda.
+  //
+  // Una parabola es exactamente una Bezier cuadratica cuyo control es donde se
+  // cruzan sus tangentes en los extremos. Con eso el empalme no se parece a la
+  // parabola: ES la parabola que pasa por los dos puntos con esas pendientes,
+  // sin constante que calibrar. Medido contra un vuelo sintetico, tirar los
+  // manejadores a L/3 dejaba 14 px de error con huecos grandes; asi quedan
+  // 0,00 px, y el acierto no depende del tamaño del hueco.
+  //
+  // Se resuelve P0 + s*tgA = P3 - t*tgB. El determinante se anula cuando las
+  // tangentes son paralelas (tramos alineados: no hay parabola que ajustar) y
+  // s,t salen negativos cuando las tangentes se cruzan HACIA ATRAS, que pasa si
+  // alguna viene torcida por ruido. En los dos casos se cae al tirador de un
+  // tercio, que es feo pero nunca inventa un rulo.
+  const det = tgA.x * tgB.y - tgA.y * tgB.x;
+  let Q = null;
+  if (Math.abs(det) > 1e-9){
+    const s = ((P3.x - P0.x) * tgB.y - (P3.y - P0.y) * tgB.x) / det;
+    const t = ((P3.y - P0.y) * tgA.x - (P3.x - P0.x) * tgA.y) / det;
+    if (s > 0 && t > 0) Q = { x: P0.x + tgA.x * s, y: P0.y + tgA.y * s };
+  }
+
+  // TECHO A LA FLECHA DEL ARCO.
+  //
+  // Las tangentes salen de puntos con ruido: medido sobre los casos reales, el
+  // residuo de deteccion es de 2-3 px RMS y su percentil 90 llega a 5,6 px. Con
+  // ese nivel de ruido dos tangentes pueden cruzarse muy lejos, y entonces la
+  // "parabola" se va en un rulo que no volo nadie —peor que la recta que vino a
+  // reemplazar—. Medido: sin techo, con ruido de 4 px el empalme se iba a 18 px
+  // del vuelo real contra 9 px de la recta.
+  //
+  // La flecha de una cuadratica es la mitad de la distancia de Q al medio de la
+  // cuerda. Se topa en L/2, que ya es un arco muy alto para un vuelo real: por
+  // debajo de eso la curva manda, por encima se entiende que la tangente venia
+  // sucia y se recorta hacia la cuerda en vez de creerle.
+  if (Q){
+    const mx = (P0.x + P3.x) / 2, my = (P0.y + P3.y) / 2;
+    const f = Math.hypot(Q.x - mx, Q.y - my);
+    if (f > L){
+      const r = L / f;
+      Q = { x: mx + (Q.x - mx) * r, y: my + (Q.y - my) * r };
+    }
+  }
+
+  // Sin frames la densidad sale de la geometria: un punto cada ~6 px, que es el
+  // paso tipico de una traza real. El tope evita que un hueco enorme —union
+  // dudosa— genere miles de puntos inventados.
+  let n = (k != null) ? k : Math.max(1, Math.round(L / 6));
+  n = Math.max(1, Math.min(300, n));
+
+  const pts = [];
+  if (Q){
+    for (let j = 1; j <= n; j++){
+      const u = j / (n + 1), v = 1 - u;
+      const a = v*v, b = 2*v*u, c = u*u;
+      pts.push(a*P0.x + b*Q.x + c*P3.x, a*P0.y + b*Q.y + c*P3.y);
+    }
+  } else {
+    const d = L / 3;
+    const P1 = { x: P0.x + tgA.x * d, y: P0.y + tgA.y * d };
+    const P2 = { x: P3.x - tgB.x * d, y: P3.y - tgB.y * d };
+    for (let j = 1; j <= n; j++){
+      const u = j / (n + 1), v = 1 - u;
+      const a = v*v*v, b = 3*v*v*u, c = 3*v*u*u, e = u*u*u;
+      pts.push(a*P0.x + b*P1.x + c*P2.x + e*P3.x,
+               a*P0.y + b*P1.y + c*P2.y + e*P3.y);
+    }
+  }
+  return { pts, n, exacto: !!Q };
+}
+
 // ===========================================================================
 //  Clip de video
 // ===========================================================================
@@ -1275,15 +1534,9 @@ function modoVideo(on){
   asegurarVideo();
   $("lecturaVideo").textContent = VID.listo ? "" : "cargando el clip…";
   lecturaVideo();
-  // Media opacidad tiene sentido cuando el fondo compite con los trazos; con
-  // el video uno está mirando el video. Se sube a tope una sola vez, y el
-  // slider queda a la vista para bajarlo si estorba.
-  if (!VID.subida && U.opFondo < 1){
-    VID.subida = true;
-    U.opFondo = 1;
-    $("opFondo").value = 1;
-    $("vOpFondo").textContent = textoOp(1);
-  }
+  // Ya no hace falta tocar la opacidad al entrar al video: el fondo va siempre
+  // pleno y el slider ahora baja LOS TRAZOS, que es justo lo que uno quiere
+  // mover mientras revisa el clip cuadro a cuadro.
 }
 
 // El bucle de repintado. Mientras el clip corre hay que redibujar el fondo a
@@ -1385,10 +1638,10 @@ function dibujarFondo(){
   // del cuadro actual lanza excepción en unos navegadores y pinta negro en el
   // resto. Con menos de HAVE_CURRENT_DATA, mejor no pintar nada.
   if (!im || (im.readyState !== undefined && im.readyState < 2)) return;
-  gf.globalAlpha = U.opFondo;
+  // El fondo va SIEMPRE pleno: es la referencia contra la que se compara, y
+  // atenuarlo solo hacia mas dificil ver lo que uno esta buscando.
   gf.imageSmoothingQuality = "high";
   gf.drawImage(im, V.x, V.y, C.meta.ancho * V.z, C.meta.alto * V.z);
-  gf.globalAlpha = 1;
 }
 
 function dibujarTrazos(){
@@ -1405,7 +1658,9 @@ function dibujarTrazos(){
 
   // Descartadas primero y atenuadas: quedan como fondo, no compiten.
   if (F.verDesc){
-    gz.globalAlpha = F.opDesc;
+    // Las dos opacidades se multiplican: `opDesc` dice cuanto se atenuan las
+    // descartadas RESPECTO del resto, y `opTraz` baja todos los trazos a la vez.
+    gz.globalAlpha = F.opDesc * U.opTraz;
     gz.strokeStyle = "#7c869b";
     gz.lineWidth = ancho * 0.8;
     for (const T of C.proyecciones)
@@ -1415,11 +1670,13 @@ function dibujarTrazos(){
 
   gz.lineWidth = ancho;
   gz.lineCap = "round"; gz.lineJoin = "round";
+  gz.globalAlpha = U.opTraz;
   for (const T of C.proyecciones){
     if (T.estado !== "activa") continue;
     gz.strokeStyle = COLOR[T.clasificacion] || "#9aa4b8";
     trazar(T);
   }
+  gz.globalAlpha = 1;
 
   if (A.activo) dibujarEmpalmes(ancho);
   if (U.sel >= 0) resaltar(C.proyecciones[U.sel], ancho);
@@ -1561,6 +1818,27 @@ function trazar(T){
       gz.lineTo(p[i] * V.z + V.x, p[i+1] * V.z + V.y);
   }
   gz.stroke();
+  // El empalme encima, punteado: ese tramo no se vio en el video. Se repinta
+  // sobre el trazo ya hecho en vez de partirlo en tres, asi el resaltado, la
+  // exportacion y el resto siguen tratando la traza como una sola polilinea.
+  if (T.empalme && T.puntos) empalmePunteado(T);
+}
+
+function empalmePunteado(T){
+  const p = T.puntos, e = T.empalme;
+  // Se arranca UN punto antes y se termina UNO despues: el punteado tiene que
+  // tapar tambien los dos segmentos que pegan la curva con los tramos reales,
+  // que son igual de inventados que la curva misma.
+  const a = Math.max(0, e.i0 - 1), b = Math.min((p.length >> 1) - 1, e.i1 + 1);
+  if (b <= a) return;
+  gz.save();
+  gz.setLineDash([5, 4]);
+  gz.beginPath();
+  gz.moveTo(p[2*a] * V.z + V.x, p[2*a+1] * V.z + V.y);
+  for (let i = a + 1; i <= b; i++)
+    gz.lineTo(p[2*i] * V.z + V.x, p[2*i+1] * V.z + V.y);
+  gz.stroke();
+  gz.restore();
 }
 
 // El resaltado tiene que RESPETAR el estado. Si repinta a todo color una
@@ -1928,8 +2206,21 @@ cz.addEventListener("mousedown", (e) => {
         `Estos dos tramos coexisten durante ${s} frames, así que no parecen las `
       + `dos mitades de un mismo vuelo sino dos detecciones simultáneas.\n\n`
       + `Los puntos se van a intercalar por tiempo.\n\n¿Unir igual?`)) return;
+    // Se captura ANTES de unir: `unirTrayectorias` descarta los dos tramos y
+    // empuja la unida al final, y deshacer es exactamente revertir esas tres.
+    const antes = copiaCampos([U.sel, j], ["estado", "razon"]);
+    const selAntes = U.sel;
     const nuevo = unirTrayectorias(U.sel, j);
     if (nuevo != null){
+      // Por referencia y no por indice: si mas adelante alguien inserta o quita
+      // trayectorias, el indice guardado apuntaria a otra cosa.
+      const unida = C.proyecciones[nuevo];
+      registrar("unir dos trayectorias", () => {
+        const k = C.proyecciones.indexOf(unida);
+        if (k >= 0) C.proyecciones.splice(k, 1);
+        volcarCampos(antes, ["estado", "razon"]);
+        U.sel = selAntes;
+      });
       U.sel = nuevo;
       alternarUnir();          // una activación, una unión
       recalcular(); verDetalle(); dibujar();
@@ -1939,10 +2230,14 @@ cz.addEventListener("mousedown", (e) => {
   if (e.button === 0 && !e.shiftKey){
     // El nadir manda: es un blanco chico y se ajusta mucho al calibrar.
     if (A.activo && Math.hypot(A.nadir.x - p.x, A.nadir.y - p.y) <= 14 / V.z){
-      arrastre = { nadir: true }; return;
+      arrastre = { nadir: true, desde: { ...A.nadir } }; return;
     }
     const k = agarrarNodo(p);
-    if (k){ arrastre = { nodo: k, i: U.sel }; return; }
+    // La curva se copia al AGARRAR, no en cada mousemove: un arrastre son
+    // decenas de eventos y cada uno seria un paso inutil en la pila. Un
+    // arrastre completo = un solo deshacer, que es como lo espera cualquiera.
+    if (k){ arrastre = { nodo: k, i: U.sel,
+                         bz: copiaBezier(C.proyecciones[U.sel]) }; return; }
     // Un pozo: muestra sus rocas (la vista inversa, que es la que el cliente
     // pide — "de este pozo salieron estas").
     if (A.activo){
@@ -2014,10 +2309,25 @@ window.addEventListener("mouseup", () => {
     // Menos de 3 vértices es un clic suelto, no un lazo: se ignora en vez de
     // descartar algo por accidente.
     if (LAZO.pts.length < 3){ LAZO.pts = []; LAZO.n = 0; dibujar(); return; }
-    aplicarLazo();
+    if (LAZO.recorte) aplicarRecorte(); else aplicarLazo();
     return;
   }
   const eraNadir = arrastre && arrastre.nadir;
+  // Solo se registra si la curva quedo DISTINTA: agarrar un tirador y soltarlo
+  // sin moverlo no es una edicion, y ensuciaria la pila con pasos que al
+  // deshacerlos no se ven.
+  if (arrastre && arrastre.nodo && arrastre.bz){
+    const T = C.proyecciones[arrastre.i];
+    if (T && JSON.stringify(T.bezier) !== JSON.stringify(arrastre.bz)){
+      const bz = arrastre.bz;
+      registrar("mover manejador", () => volcarBezier(T, bz));
+    }
+  }
+  if (eraNadir && arrastre.desde &&
+      (arrastre.desde.x !== A.nadir.x || arrastre.desde.y !== A.nadir.y)){
+    const d = arrastre.desde;
+    registrar("mover nadir", () => { A.nadir.x = d.x; A.nadir.y = d.y; });
+  }
   arrastre = null;
   document.body.classList.remove("paneando");
   // El resumen y el ranking se recalculan al SOLTAR, no durante el arrastre:
@@ -2237,8 +2547,109 @@ function atrapadas(poly, tocar, restaurar){
   return res;
 }
 
+// ===========================================================================
+//  Deshacer (Ctrl+Z)
+// ===========================================================================
+//
+// Hasta ahora la vista NO tenia deshacer de ningun tipo: un lazo que agarro de
+// mas, una union equivocada o un tirador movido sin querer solo se arreglaban
+// recargando, y ahi se perdia TODO el trabajo manual de la sesion. Con edicion
+// destructiva (recortar tramos) eso deja de ser un incordio y pasa a ser un
+// riesgo real, asi que el deshacer va primero.
+//
+// No se guardan instantaneas del caso completo: `C.proyecciones` son miles de
+// trayectorias (3.742 en el caso con IA, ~2 MB en JSON) y copiarlo entero por
+// operacion llenaria la memoria del navegador a los pocos pasos. Cada operacion
+// registra en cambio su PROPIO inverso, que toca solo lo que cambio.
+//
+// Es solo deshacer, sin rehacer: rehacer obliga a guardar tambien la ida de
+// cada operacion y a decidir que pasa cuando se edita con la pila a medias.
+// El costo no se justifica todavia.
+
+const HIST = { pila: [], tope: 60 };
+
+function registrar(desc, deshacerFn){
+  HIST.pila.push({ desc, deshacer: deshacerFn });
+  // Tope duro: sin el, una sesion larga de lazos acumula sin limite.
+  if (HIST.pila.length > HIST.tope) HIST.pila.shift();
+  pintarDeshacer();
+}
+
+function deshacer(){
+  const paso = HIST.pila.pop();
+  if (!paso){ avisar("No hay nada que deshacer"); return; }
+  paso.deshacer();
+  pintarDeshacer();
+  // Lo mismo que hace `relanzar` tras cambiar un parametro: deshacer puede
+  // devolver una trayectoria a la vida, y el ranking de candidatos y el resumen
+  // por pozo tienen que enterarse.
+  recalcular(); refrescarAsoc(); resumenAsoc(); verDetalle(); dibujar();
+  avisar(`Deshecho: ${paso.desc}`);
+}
+
+// Copia de los campos editables de un conjunto de trayectorias. Basta con los
+// campos que la operacion toca: lo demas no cambia y copiarlo seria peso muerto.
+//
+// Se guarda la REFERENCIA a la trayectoria, no su indice. Un indice deja de
+// apuntar a lo mismo en cuanto alguien inserta o quita algo del arreglo, y
+// entonces deshacer le devuelve el estado a la trayectoria equivocada —en
+// silencio, que es la peor forma de fallar—. Con la referencia el paso sigue
+// siendo correcto pase lo que pase con el orden.
+function copiaCampos(idxs, campos){
+  return idxs.map(i => {
+    const T = C.proyecciones[i], o = { _T: T };
+    for (const c of campos) o[c] = T[c];
+    return o;
+  });
+}
+
+function volcarCampos(snap, campos){
+  for (const s of snap){
+    if (!s._T) continue;
+    for (const c of campos) s._T[c] = s[c];
+  }
+}
+
+// La curva se guarda entera y en profundidad: son cuatro puntos, no pesa, y
+// restaurarla exige rasterizar de nuevo para que los puntos y las metricas
+// derivadas queden coherentes con los manejadores.
+function copiaBezier(T){
+  return T.bezier ? JSON.parse(JSON.stringify(T.bezier)) : null;
+}
+
+function volcarBezier(T, bz){
+  if (!T) return;
+  T.bezier = bz;
+  if (bz){ rasterizar(T); }
+  preparar(T);
+}
+
+function pintarDeshacer(){
+  const b = $("btnDeshacer");
+  if (!b) return;
+  const n = HIST.pila.length;
+  b.disabled = !n;
+  b.title = n ? `Deshacer: ${HIST.pila[n-1].desc} (Ctrl+Z) — ${n} paso${n>1?"s":""}`
+              : "Nada que deshacer (Ctrl+Z)";
+}
+
+// Aviso efimero. La vista no tenia donde decir "listo" sin ensuciar el panel:
+// un alert() cortaria el flujo de edicion, que es justo lo que no se quiere
+// cuando alguien esta deshaciendo varios pasos seguidos.
+let _avisoT = null;
+function avisar(txt){
+  const d = $("aviso");
+  if (!d) return;
+  d.textContent = txt;
+  d.classList.add("ver");
+  clearTimeout(_avisoT);
+  _avisoT = setTimeout(() => d.classList.remove("ver"), 2200);
+}
+
 function aplicarLazo(){
   const idx = atrapadas(LAZO.pts, LAZO.tocar, LAZO.restaurar);
+  const antes = copiaCampos(idx, ["estado", "razon"]);
+  const selAntes = U.sel;
   for (const i of idx){
     const T = C.proyecciones[i];
     if (LAZO.restaurar){ T.estado = "activa"; T.razon = null; }
@@ -2247,6 +2658,9 @@ function aplicarLazo(){
   // Si la seleccionada se fue en la redada, deja de tener sentido el panel.
   if (U.sel >= 0 && idx.includes(U.sel) && !LAZO.restaurar) U.sel = -1;
   LAZO.pts = []; LAZO.n = 0;
+  if (idx.length)
+    registrar(`${LAZO.restaurar ? "restaurar" : "descartar"} ${idx.length} con lazo`,
+              () => { volcarCampos(antes, ["estado", "razon"]); U.sel = selAntes; });
   recalcular(); verDetalle(); dibujar();
   return idx.length;
 }
@@ -2262,9 +2676,14 @@ function dibujarLazo(){
     gz.lineTo(q.x, q.y);
   }
   gz.closePath();
-  gz.fillStyle = LAZO.restaurar ? "rgba(77,163,255,0.12)" : "rgba(255,77,77,0.12)";
+  // Naranjo para recortar: el rojo ya significa "descarto la trayectoria
+  // entera" y las dos herramientas se dibujan igual, asi que el color es lo
+  // unico que dice cual esta armada.
+  gz.fillStyle = LAZO.recorte   ? "rgba(255,168,46,0.12)"
+               : LAZO.restaurar ? "rgba(77,163,255,0.12)" : "rgba(255,77,77,0.12)";
   gz.fill();
-  gz.strokeStyle = LAZO.restaurar ? "#4da3ff" : "#ff4d4d";
+  gz.strokeStyle = LAZO.recorte   ? "#ffa82e"
+                 : LAZO.restaurar ? "#4da3ff" : "#ff4d4d";
   gz.lineWidth = 1.5;
   gz.setLineDash([6, 4]);
   gz.stroke();
@@ -2275,18 +2694,151 @@ function dibujarLazo(){
 function alternarLazo(){
   U.lazo = !U.lazo;
   LAZO.pts = []; LAZO.n = 0;
-  if (U.lazo && U.dibujando) alternarDibujo();
-  if (U.lazo && U.uniendo) alternarUnir();
+  if (U.lazo){
+    LAZO.recorte = false;
+    if (U.dibujando) alternarDibujo();
+    if (U.uniendo) alternarUnir();
+  }
   $("btnLazo").classList.toggle("on", U.lazo);
+  $("btnRecorte").classList.remove("on");
   document.body.classList.toggle("lazando", U.lazo);
   dibujar();
+}
+
+// ===========================================================================
+//  Lazo de recorte: quedarse con el tramo bueno
+// ===========================================================================
+//
+// El lazo normal es todo o nada: descarta la trayectoria entera. Pero hay
+// trazas BUENAS EN UN TRAMO Y MALAS EN OTRO —un zigzag imposible a la mitad, o
+// una cola que se fue con el humo— y botarlas completas tira informacion buena.
+//
+// Es un lazo y no una tijera de dos clics a proposito: rodear tambien sirve
+// para cortar los EXTREMOS, que es el caso mas comun, y no obliga a acertarle a
+// dos puntos exactos sobre el trazo.
+//
+// Lo que sale NO es una anotacion cosmetica: es una trayectoria de primera
+// clase, con sus metricas recalculadas, que sigue viva para los filtros, la
+// asociacion al pozo y el entregable. La original queda descartada —no se
+// borra— para que el archivo siga contando de donde salio cada cosa.
+
+function alternarRecorte(){
+  LAZO.recorte = !LAZO.recorte;
+  U.lazo = LAZO.recorte;      // comparte el dibujo del lazo, cambia que hace al soltar
+  LAZO.pts = []; LAZO.n = 0;
+  if (U.lazo){
+    if (U.dibujando) alternarDibujo();
+    if (U.uniendo) alternarUnir();
+  }
+  $("btnRecorte").classList.toggle("on", LAZO.recorte);
+  $("btnLazo").classList.remove("on");
+  document.body.classList.toggle("lazando", U.lazo);
+  dibujar();
+}
+
+function aplicarRecorte(){
+  const poly = LAZO.pts;
+  const caja = cajaDe(poly);
+  const nuevas = [], tocadas = [];
+
+  for (let i = 0; i < C.proyecciones.length; i++){
+    const T = C.proyecciones[i];
+    // SOLO lo que esta en pantalla. Las descartadas y las que un filtro tiene
+    // ocultas no se tocan: no se puede juzgar lo que no se ve, y recortar una
+    // oculta tenia ademas un efecto al reves del esperado —la recortada nace
+    // activa y exenta de filtros, asi que aparecia en pantalla una traza nueva
+    // que no estaba antes del lazo—.
+    if (T.estado !== "activa" || !T.puntos || T.n < 2) continue;
+    // Descarte rapido por caja: sin esto se evaluan miles de poligonos contra
+    // trazas que ni se acercan.
+    if (T.bb.x1 < caja.x0 || T.bb.x0 > caja.x1 ||
+        T.bb.y1 < caja.y0 || T.bb.y0 > caja.y1) continue;
+
+    const p = T.puntos, quedan = [], fr = [];
+    let fuera = 0;
+    for (let k = 0; k < T.n; k++){
+      if (dentroPoly(p[2*k], p[2*k+1], poly)) continue;
+      fuera++;
+      quedan.push(p[2*k], p[2*k+1]);
+      if (T.frames) fr.push(T.frames[k]);
+    }
+    if (fuera === T.n) continue;              // no le toco ningun punto
+    tocadas.push(T);
+    // Si se rodeo la traza entera —o quedo un resto que ya no es una traza—, el
+    // recorte equivale a descartarla. Se marca asi en vez de dejar un muñon de
+    // dos puntos que despues nadie sabe interpretar.
+    if (fuera >= 2) nuevas.push(recortada(T, quedan, T.frames ? fr : null));
+  }
+
+  if (!tocadas.length){ LAZO.pts = []; LAZO.n = 0; dibujar(); return 0; }
+
+  const antes = copiaCampos(tocadas.map(T => C.proyecciones.indexOf(T)),
+                            ["estado", "razon"]);
+  const selAntes = U.sel;
+  for (const T of tocadas){ T.estado = "descartada"; T.razon = "recortada"; }
+  for (const T of nuevas) C.proyecciones.push(T);
+  U.sel = nuevas.length === 1 ? C.proyecciones.indexOf(nuevas[0]) : -1;
+
+  registrar(`recortar ${tocadas.length} trayectoria${tocadas.length>1?"s":""}`,
+            () => {
+              for (const T of nuevas){
+                const k = C.proyecciones.indexOf(T);
+                if (k >= 0) C.proyecciones.splice(k, 1);
+              }
+              volcarCampos(antes, ["estado", "razon"]);
+              U.sel = selAntes;
+            });
+
+  LAZO.pts = []; LAZO.n = 0;
+  recalcular(); refrescarAsoc(); resumenAsoc(); verDetalle(); dibujar();
+  avisar(nuevas.length
+    ? `Recortadas ${tocadas.length}: quedan ${nuevas.length} trayectorias`
+    : `Descartadas ${tocadas.length} (el lazo se las llevo enteras)`);
+  return tocadas.length;
+}
+
+// La traza que sobrevive al recorte. Hereda lo que no se puede recalcular y
+// recalcula lo que si: fingir que las metricas del tracker siguen valiendo
+// sobre otro conjunto de puntos seria mentir en el entregable.
+function recortada(orig, puntos, frames){
+  const esc = C.calibra.escala_px_por_m || 1;
+  const p0 = { x: puntos[0], y: puntos[1] };
+  const pf = { x: puntos[puntos.length-2], y: puntos[puntos.length-1] };
+  let largo = 0;
+  for (let k = 2; k < puntos.length; k += 2)
+    largo += Math.hypot(puntos[k]-puntos[k-2], puntos[k+1]-puntos[k-1]);
+  const cuerda = Math.hypot(pf.x-p0.x, pf.y-p0.y);
+
+  const T = {
+    id: `${orig.id}r`,
+    fuente: "recorte",
+    recorte_de: orig.id,
+    quitados: orig.n - (puntos.length >> 1),
+    puntos, frames,
+    t_ini: frames ? frames[0] : null,
+    t_fin: frames ? frames[frames.length-1] : null,
+    clasificacion: orig.clasificacion,
+    distancia_m: +(cuerda / esc).toFixed(2),
+    // Tortuosidad se recalcula exacta sobre lo que quedo. Las otras dos salen
+    // del ajuste del pipeline y no se pueden rehacer aca, asi que se heredan.
+    tortuosidad: cuerda > 1e-6 ? +(largo / cuerda).toFixed(3) : 1,
+    escape_relativo: orig.escape_relativo,
+    r2_score: orig.r2_score,
+    estado: "activa", razon: null, asociacion: null,
+  };
+  preparar(T);
+  return T;
 }
 
 function alternarDescarte(){
   if (U.sel < 0) return;
   const T = C.proyecciones[U.sel];
-  if (T.estado === "descartada"){ T.estado = "activa"; T.razon = null; }
+  const antes = copiaCampos([U.sel], ["estado", "razon"]);
+  const volvia = T.estado === "descartada";
+  if (volvia){ T.estado = "activa"; T.razon = null; }
   else { T.estado = "descartada"; T.razon = "usuario"; }
+  registrar(volvia ? "restaurar trayectoria" : "descartar trayectoria",
+            () => volcarCampos(antes, ["estado", "razon"]));
   recalcular(); verDetalle();
 }
 
@@ -2333,7 +2885,12 @@ function unirTrayectorias(iA, iB){
   // deja de ir ascendente, y de ahí salen `t_ini` y todo el calce temporal.
   // Ordenar por frame lo garantiza por construcción, y para dos tramos
   // realmente consecutivos da exactamente el mismo resultado que concatenar.
-  let puntos, frames = null;
+  let puntos, frames = null, empalme = null;
+  // Sin solape los frames de `pri` van TODOS antes que los de `seg`, asi que la
+  // frontera entre los dos tramos cae en un indice conocido y ahi es donde se
+  // mete la curva. Con solape no hay hueco que rellenar —los puntos se
+  // intercalan— y el empalme no corresponde.
+  const consecutivos = solapeTemporal(pri, seg) <= 0;
   if (pri.frames && seg.frames){
     const trios = [];
     const cargar = (T) => {
@@ -2344,8 +2901,28 @@ function unirTrayectorias(iA, iB){
     trios.sort((a, b) => a[0] - b[0]);
     puntos = []; frames = [];
     for (const [f, x, y] of trios){ frames.push(f); puntos.push(x, y); }
+
+    const faltan = seg.t_ini - pri.t_fin - 1;
+    if (consecutivos && faltan > 0){
+      const gen = curvaEmpalme(pri, seg, faltan);
+      if (gen){
+        const corte = pri.frames.length;
+        const px = [], fr = [];
+        for (let j = 0; j < gen.n; j++){
+          px.push(gen.pts[2*j], gen.pts[2*j+1]);
+          fr.push(pri.t_fin + 1 + j);
+        }
+        puntos.splice(2 * corte, 0, ...px);
+        frames.splice(corte, 0, ...fr);
+        empalme = { i0: corte, i1: corte + gen.n - 1, frames: gen.n };
+      }
+    }
   } else {
-    puntos = pri.puntos.concat(seg.puntos);
+    // Sin eje temporal (trazos manuales) el hueco se mide en pixeles.
+    const gen = curvaEmpalme(pri, seg, null);
+    const corte = pri.puntos.length >> 1;
+    puntos = pri.puntos.concat(gen ? gen.pts : [], seg.puntos);
+    if (gen) empalme = { i0: corte, i1: corte + gen.n - 1, frames: null };
   }
 
   const esc = C.calibra.escala_px_por_m || 1;
@@ -2362,6 +2939,10 @@ function unirTrayectorias(iA, iB){
     id: `${pri.id}+${seg.id}`,
     fuente: "unida",
     unida_de: [pri.id, seg.id],
+    // Que tramo NO se vio en el video, sino que lo puso el sistema. Se dibuja
+    // punteado y viaja en el entregable: si alguien mide alcance sobre esta
+    // traza tiene que poder saber que puntos son medidos y cuales inventados.
+    empalme,
     puntos, frames,
     t_ini: frames ? frames[0] : null,
     t_fin: frames ? frames[frames.length - 1] : null,
@@ -2437,6 +3018,12 @@ function fijarNuevo(){
   };
   rasterizar(T); preparar(T);
   C.proyecciones.push(T);
+  const selAntes = U.sel;
+  registrar("dibujar trayectoria", () => {
+    const k = C.proyecciones.indexOf(T);
+    if (k >= 0) C.proyecciones.splice(k, 1);
+    U.sel = selAntes;
+  });
   NUEVO = null;
   U.sel = C.proyecciones.length - 1;
   // Al fijar se SALE del modo dibujo. Si no, el clic siguiente (el que quiere
@@ -2453,6 +3040,9 @@ function alternarGrado(){
   if (U.sel < 0) return;
   const T = C.proyecciones[U.sel];
   if (!T.bezier) return;
+  const bzAntes = copiaBezier(T);
+  registrar(T.bezier.c2 ? "bajar a un manejador" : "subir a dos manejadores",
+            () => volcarBezier(T, bzAntes));
   const B = T.bezier;
   if (B.c2){
     // Reduccion de grado: Q = (3(c1+c2) - p0 - p2) / 4. Es la inversa EXACTA
@@ -2521,9 +3111,10 @@ $("selFondo").addEventListener("change", e => {
 // cero de la izquierda como en el resto de los controles.
 const textoOp = (v) => v >= 1 ? "1.00" : v.toFixed(2).slice(1);
 $("opFondo").addEventListener("input", e => {
-  U.opFondo = parseFloat(e.target.value);
-  $("vOpFondo").textContent = textoOp(U.opFondo);
-  dibujarFondo();
+  U.opTraz = parseFloat(e.target.value);
+  $("vOpFondo").textContent = textoOp(U.opTraz);
+  // Ahora repinta LOS TRAZOS, no el fondo: el fondo no cambia al mover esto.
+  dibujarTrazos();
 });
 
 // ---------- transporte del clip ----------
@@ -2555,6 +3146,8 @@ $("btnEscape").addEventListener("click", e => {
 $("btnDibujar").addEventListener("click", alternarDibujo);
 $("btnLazo").addEventListener("click", alternarLazo);
 $("btnUnir").addEventListener("click", alternarUnir);
+$("btnRecorte").addEventListener("click", alternarRecorte);
+$("btnDeshacer").addEventListener("click", deshacer);
 $("btnAsociar").addEventListener("click", alternarAsoc);
 
 // k es el parametro mas sensible del sistema: equivocarse un paso cuesta entre
@@ -2703,6 +3296,13 @@ function alternarDibujo(){
 window.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
 
+  // Ctrl+Z va ARRIBA de todo, incluso del transporte del clip: es lo que se
+  // aprieta por reflejo despues de un error, y no puede depender de en que
+  // modo quedo la vista.
+  if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")){
+    deshacer(); e.preventDefault(); return;
+  }
+
   // El transporte del clip solo secuestra estas teclas mientras el video ES el
   // fondo; fuera de ese modo la vista se comporta igual que siempre.
   if (U.fondo === "video" && VID.listo){
@@ -2718,13 +3318,15 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "d" || e.key === "D") alternarDibujo();
   else if (e.key === "a" || e.key === "A") alternarAsoc();
   else if (e.key === "l" || e.key === "L") alternarLazo();
+  else if (e.key === "r" || e.key === "R") alternarRecorte();
   else if (e.key === "u" || e.key === "U") alternarUnir();
   else if (e.key === "Escape"){
     NUEVO = null; U.sel = -1;
     // Escape también aborta un lazo a medias y sale de los modos, que es lo que
     // uno intenta cuando se dio cuenta de que iba a agarrar lo que no era.
     LAZO.pts = []; LAZO.n = 0; arrastre = null;
-    if (U.lazo) alternarLazo();
+    if (LAZO.recorte) alternarRecorte();
+    else if (U.lazo) alternarLazo();
     if (U.uniendo){ U.uniendo = false; $("btnUnir").classList.remove("on");
                     document.body.classList.remove("uniendo"); }
     verDetalle(); dibujar();
@@ -2810,6 +3412,23 @@ function construirEntregable(){
       // quien la hizo.
       fuente: T.fuente || "pipeline",
       unida_de: T.unida_de || null,
+      // De que trayectoria salio este recorte y cuantos puntos se le quitaron.
+      // Es la respuesta a «¿por que esta traza mide la mitad?»: la original
+      // sigue en el archivo, descartada con razon "recortada", y estos dos
+      // campos dicen exactamente que se saco.
+      recorte_de: T.recorte_de || null,
+      puntos_quitados: T.quitados != null ? T.quitados : null,
+      // El tramo que el sistema RECONSTRUYO al unir: puntos que no se vieron en
+      // el video, interpolados por una curva entre las dos tangentes. Va en el
+      // archivo para que quien mida sepa cuales son medidos y cuales no; sin
+      // esto un alcance calculado sobre la traza unida es indistinguible de uno
+      // medido punto a punto.
+      empalme: T.empalme ? {
+        puntos: T.empalme.i1 - T.empalme.i0 + 1,
+        frames: T.empalme.frames,
+        desde_punto: T.empalme.i0,
+        metodo: "bezier cubica sobre las tangentes de los dos tramos",
+      } : null,
       origen: pozo ? {
         pozo: pozo.id,
         confianza: r3(cand[0].conf),

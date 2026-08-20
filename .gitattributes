@@ -1,0 +1,41 @@
+# Finales de linea. NO es cosmetico: el cliente corre el paquete en Windows.
+#
+# Este repo tiene `core.autocrlf = input`, que normaliza CRLF -> LF al
+# commitear y NO lo devuelve al bajar. Resultado: `entrega/detovision.bat`
+# terminaba en el disco con finales de linea LF sin que nadie lo tocara, y en
+# el equipo del cliente el script fallaba con
+#
+#     El sistema no encuentra la etiqueta por lotes especificada: FIN_RAM
+#
+# `eol=crlf` gana sobre `autocrlf`, asi que estas reglas valen para cualquiera
+# que clone, sin depender de como tenga configurado su git.
+
+* text=auto
+
+# --- Windows: SIEMPRE CRLF en el disco -------------------------------------
+# cmd.exe necesita CRLF para resolver etiquetas y bloques de forma fiable.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# --- Linux: SIEMPRE LF -----------------------------------------------------
+# Estos viajan DENTRO de los contenedores. Un script con CRLF falla ahi con
+# `bad interpreter: /bin/sh^M`, que es el mismo problema al reves.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.conf      text eol=lf
+.dockerignore text eol=lf
+
+# --- Binarios: que git no los toque ----------------------------------------
+# Sin esto, `text=auto` puede intentar normalizar un binario mal detectado y
+# corromperlo. El .onnx son 447 MB de pesos: no hay margen para eso.
+*.onnx binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.tiff binary
+*.mp4  binary
+*.zip  binary
+*.pdf  binary
+*.xlsx binary
+*.pptx binary

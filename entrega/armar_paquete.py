@@ -97,6 +97,39 @@ def ignorar_de(servicio: str):
     return _ignorar
 
 
+def normalizar_bats(raiz: Path) -> list:
+    """Deja todos los .bat/.cmd del paquete con finales de linea CRLF.
+
+    POR QUE ESTA COMPROBACION EXISTE. El v9 salio con `detovision.bat` en LF y
+    en el equipo del cliente el script moria despues del paso 2b con «El sistema
+    no encuentra la etiqueta por lotes especificada: FIN_RAM». El .gitattributes
+    fuerza CRLF al hacer checkout, pero ESTE script no copia desde git: copia
+    del disco. Basta con que alguien edite el .bat con un editor que guarde en
+    LF —o que lo genere desde WSL— para que el paquete vuelva a salir roto, y el
+    .gitattributes no se entera hasta el commit siguiente.
+
+    Se corrige en vez de solo avisar: el paquete se arma para entregarlo, y un
+    aviso en la consola es justo lo que se pasa por alto a las 8 de la noche.
+
+    El cliente SIEMPRE corre esto en Windows. En Linux un .bat no se ejecuta,
+    asi que no hay caso en que convenga dejarlo en LF.
+    """
+    tocados = []
+    for f in sorted(raiz.rglob("*")):
+        if not f.is_file() or f.suffix.lower() not in (".bat", ".cmd"):
+            continue
+        crudo = f.read_bytes()
+        # A LF primero y de vuelta a CRLF: asi da igual si venia mezclado.
+        arreglado = crudo.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        # cmd.exe puede ignorar la ultima linea si no termina en salto.
+        if arreglado and not arreglado.endswith(b"\r\n"):
+            arreglado += b"\r\n"
+        if arreglado != crudo:
+            f.write_bytes(arreglado)
+            tocados.append(f.relative_to(raiz))
+    return tocados
+
+
 def pesar(ruta: Path) -> int:
     return sum(f.stat().st_size for f in ruta.rglob("*") if f.is_file())
 
@@ -173,6 +206,14 @@ def main() -> int:
     vista = mvp / "flyRocks_frontend" / "public" / "vista.html"
     if not vista.exists():
         print("  AVISO: no viajo public/vista.html — el paso 4 nuevo no va a cargar")
+
+    # Los .bat en CRLF. Es lo unico que el cliente ejecuta a mano, y en LF
+    # falla con un error que no dice nada ("no encuentra la etiqueta por lotes").
+    arreglados = normalizar_bats(destino)
+    if arreglados:
+        print(f"  CRLF corregido en: {', '.join(str(x) for x in arreglados)}")
+    else:
+        print("  .bat en CRLF: correcto")
 
     # Con cual de las dos vistas arranca el paso 4, ESCRITO. Sin la variable el
     # codigo tambien arranca con la nueva (`undefined !== "false"`), pero eso es
