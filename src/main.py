@@ -3,6 +3,7 @@ import json
 import shutil
 import asyncio
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -122,12 +123,117 @@ def _guardar_artefactos(carpeta: Path, job_id: str, nombre_video: str, ancla):
     except Exception as e:              # no vale la pena tumbar el analisis
         print(f"[frame] no se pudo extraer el frame de referencia: {e}")
 
+    web = _derivar_video_web(carpeta, nombre_video)
+
     return {
         "carpeta": job_id,
         "mascara": f"{job_id}/mascara_cambios.png",
         "frame": f"{job_id}/frame.jpg" if destino.exists() else None,
-        "video": f"{job_id}/{nombre_video}",
+        # El derivado reproducible si se pudo lanzar; si no, el original, que al
+        # menos sirve para descargarlo aunque el navegador no lo pinte.
+        "video": f"{job_id}/{web}" if web else f"{job_id}/{nombre_video}",
+        "video_original": f"{job_id}/{nombre_video}",
     }
+
+
+# Códecs que un navegador reproduce de verdad. El resto hay que convertirlo.
+_CODECS_WEB = ("avc1", "h264")
+
+
+def _derivar_video_web(carpeta: Path, nombre_video: str):
+    """Deja un derivado H.264 del clip, para que el fondo de video se vea.
+
+    EL PROBLEMA. El clip que llega del recorte viene de OpenCV con el fourcc
+    `mp4v`, o sea MPEG-4 parte 2. La extension dice .mp4 —el envase es correcto—
+    pero NINGUN navegador decodifica ese codec: el <video> falla con
+    MEDIA_ERR_SRC_NOT_SUPPORTED (error 4) y el fondo queda en negro. Medido sobre
+    un job real: `codec_name=mpeg4, codec_tag=mp4v, Simple Profile`.
+
+    Se veia solo en la app: las vistas sobre casos congelados funcionaban porque
+    `caso_desde_job.py` ya generaba su propio derivado H.264. O sea, el unico que
+    NO tenia el video reproducible era el cliente.
+
+    POR QUE UN DERIVADO Y NO CONVERTIR EL ORIGINAL. El pipeline consume el clip
+    tal cual y su cache depende del archivo (ruta + tamaño + fecha): reescribirlo
+    invalidaria la cache de todos los nodos y cambiaria la entrada del detector
+    por una razon que no tiene nada que ver con la deteccion. El derivado es solo
+    para mirar.
+
+    CUANDO. En un hilo aparte: son ~26 s sobre un clip 4K de 92 MB, y el POST que
+    dispara el analisis tiene que responder al toque con el job_id. El pipeline
+    tarda minutos, asi que el derivado siempre esta listo mucho antes de que
+    alguien abra la vista.
+
+    Devuelve el nombre del archivo derivado, o None si no hay nada que hacer
+    (el clip ya era H.264) o si no se puede (sin ffmpeg).
+    """
+    import shutil as _sh
+    import subprocess
+    import threading
+
+    origen = carpeta / nombre_video
+    if not origen.exists():
+        return None
+
+    # Si ya viene en H.264 no se toca: transcodificar de nuevo solo perderia
+    # calidad y tiempo.
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(origen))
+        cc = int(cap.get(cv2.CAP_PROP_FOURCC) or 0)
+        cap.release()
+        fourcc = "".join(chr((cc >> 8 * i) & 0xFF) for i in range(4)).lower()
+        if fourcc in _CODECS_WEB:
+            print(f"[video] {nombre_video} ya es {fourcc}: no hace falta derivado")
+            return None
+    except Exception as e:
+        fourcc = "?"
+        print(f"[video] no se pudo leer el codec ({e}); se genera derivado igual")
+
+    if not _sh.which("ffmpeg"):
+        print("[video] sin ffmpeg: el fondo de video no se va a poder reproducir")
+        return None
+
+    salida = "video_web.mp4"
+    # Se escribe a un temporal y se renombra al final. Si no, la vista puede
+    # pedir el archivo a medio escribir y fallar igual que antes, pero ahora sin
+    # que se entienda por que.
+    tmp = carpeta / "video_web.parcial.mp4"
+    final = carpeta / salida
+
+    def convertir():
+        cmd = [
+            "ffmpeg", "-v", "error", "-y", "-i", str(origen),
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+            # GOP corto: la vista salta frame a frame y con keyframes cada 250
+            # cuadros cada salto obliga a decodificar medio segundo de video.
+            "-g", "15",
+            "-pix_fmt", "yuv420p",
+            # El moov al principio. OpenCV lo deja al final, y asi el navegador
+            # tiene que bajarse el archivo entero antes de pintar el primer
+            # cuadro (92 MB por un frame).
+            "-movflags", "+faststart",
+            "-an", str(tmp),
+        ]
+        try:
+            t0 = time.time()
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            if r.returncode == 0 and tmp.exists():
+                tmp.replace(final)
+                mb = final.stat().st_size / 1e6
+                print(f"[video] derivado H.264 listo en {time.time()-t0:.0f}s "
+                      f"({mb:.0f} MB, desde {fourcc})")
+            else:
+                print(f"[video] ffmpeg fallo ({r.returncode}): "
+                      f"{(r.stderr or '').strip()[:300]}")
+                tmp.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"[video] no se pudo derivar el clip: {e}")
+            tmp.unlink(missing_ok=True)
+
+    threading.Thread(target=convertir, daemon=True).start()
+    print(f"[video] {nombre_video} viene en {fourcc}: derivando H.264 en segundo plano")
+    return salida
 
 
 def _fps_de(video_path: str):
