@@ -1,9 +1,8 @@
 import numpy as np
 import cv2
 import logging
-import gc
+import math
 import onnxruntime as ort
-import time
 from typing import Any, Dict
 
 from .base import PipelineNode
@@ -14,6 +13,7 @@ class AISmokeFilterNode(PipelineNode):
     """
     Proyecta ventanas temporales del tensor de eventos a 2D y utiliza
     una red neuronal ONNX para identificar y eliminar puntos asociados al humo.
+    Incluye optimización de rendimiento mediante reducción de resolución con Max-Pooling.
     """
     def __init__(
         self, 
@@ -21,38 +21,54 @@ class AISmokeFilterNode(PipelineNode):
         onnx_path: str = "detovision_model_v18.onnx", 
         frames_contexto: int = 60, 
         avance_frames: int = 30, 
-        umbral_prob: float = 0.90
+        umbral_prob: float = 0.90,
+        escala: float = 0.75  # <-- Integración del parámetro de escala
     ):
         super().__init__(name)
         self.onnx_path = onnx_path
         self.frames_contexto = frames_contexto
         self.avance_frames = avance_frames
         self.umbral_prob = umbral_prob
+        self.escala = escala
 
     def _obtener_probabilidad_humo(self, session, input_name, image_gray):
-        img_h, img_w = image_gray.shape
+        h_orig, w_orig = image_gray.shape
+        
+        # 1. Reducción con Max Pooling simulado (Dilatación + Nearest)
+        w_nuevo, h_nuevo = int(w_orig * self.escala), int(h_orig * self.escala)
+        
+        factor = math.ceil(1.0 / self.escala) 
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (factor, factor))
+        
+        img_dilatada = cv2.dilate(image_gray, kernel)
+        img_reducida = cv2.resize(img_dilatada, (w_nuevo, h_nuevo), interpolation=cv2.INTER_NEAREST)
+            
+        img_h, img_w = img_reducida.shape
+        
+        # 2. Padding a múltiplos de 128 para la IA
         pad_w = (128 - (img_w % 128)) % 128
         pad_h = (128 - (img_h % 128)) % 128
         
         if pad_h > 0 or pad_w > 0:
-            padded = np.pad(image_gray, ((0, pad_h), (0, pad_w)), mode='constant', constant_values=0)
+            padded = np.pad(img_reducida, ((0, pad_h), (0, pad_w)), mode='constant', constant_values=0)
         else:
-            padded = image_gray
+            padded = img_reducida
             
+        # 3. Inferencia
         input_tensor = (padded.astype(np.float32) / 255.0)[np.newaxis, np.newaxis, :, :]
         
         logits = session.run(None, {input_name: input_tensor})[0][0]
         logits_cropped = logits[:, :img_h, :img_w]
         
-        # NUESTRA OPTIMIZACIÓN: Matemática In-place para no duplicar matrices pesadas en RAM
-        max_logits = np.max(logits_cropped, axis=0, keepdims=True)
-        logits_cropped -= max_logits 
-        np.exp(logits_cropped, out=logits_cropped)
-        sum_exp = np.sum(logits_cropped, axis=0, keepdims=True)
-        logits_cropped /= sum_exp 
+        # 4. Softmax
+        exp_logits = np.exp(logits_cropped - np.max(logits_cropped, axis=0, keepdims=True))
+        probabilidades = exp_logits / np.sum(exp_logits, axis=0, keepdims=True)
+        prob_humo_reducida = probabilidades[1, :, :] # Retorna la capa de la clase 1 (Humo)
         
-        prob_humo = logits_cropped[1, :, :].copy() 
-        return prob_humo
+        # 5. Restaurar a resolución original
+        prob_humo_restaurada = cv2.resize(prob_humo_reducida, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
+        
+        return prob_humo_restaurada
 
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
         tensor = context.get("tensor_raw")
@@ -61,11 +77,7 @@ class AISmokeFilterNode(PipelineNode):
             return context
 
         try:
-            # SIN arena de memoria. (Comentario del equipo conservado)
-            opciones = ort.SessionOptions()
-            opciones.enable_cpu_mem_arena = False
-            session = ort.InferenceSession(self.onnx_path, opciones,
-                                           providers=['CPUExecutionProvider'])
+            session = ort.InferenceSession(self.onnx_path, providers=['CPUExecutionProvider'])
             input_name = session.get_inputs()[0].name
         except Exception as e:
             context["error"] = f"Error al cargar el modelo ONNX en {self.onnx_path}: {e}"
@@ -77,14 +89,7 @@ class AISmokeFilterNode(PipelineNode):
         
         tensor_filtrado = []
         
-        ventanas = len(range(0, max_t, self.avance_frames))
-        logger.info(
-            f"[{self.name}] {len(tensor):,} eventos en {max_t} frames, "
-            f"cuadro {max_x}x{max_y}. {ventanas} ventanas de "
-            f"{self.frames_contexto} frames cada {self.avance_frames}, "
-            f"umbral {self.umbral_prob}")
-        t_inicio = time.time()
-        n_ventana = 0
+        logger.info(f"[{self.name}] Ejecutando inferencia en ventanas temporales (Escala: {self.escala*100:.0f}%)...")
 
         for start_frame in range(0, max_t, self.avance_frames):
             end_frame_ctx = start_frame + self.frames_contexto
@@ -97,54 +102,26 @@ class AISmokeFilterNode(PipelineNode):
             
             img_intensidad = cv2.normalize(canvas, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             
-            # NUESTRA OPTIMIZACIÓN: Borramos el canvas 4K pesado antes de inferir
-            del canvas
-            
+            # Usando el nuevo motor con Max-Pooling
             prob_humo = self._obtener_probabilidad_humo(session, input_name, img_intensidad)
             
             end_frame_guardado = min(start_frame + self.avance_frames, max_t)
             puntos_app = tensor[(tensor[:, 2] >= start_frame) & (tensor[:, 2] < end_frame_guardado)]
             
-            # OPTIMIZACIÓN DEL EQUIPO: Vectorización con validación de límites (dentro)
-            if len(puntos_app) > 0:
-                xs = puntos_app[:, 0].astype(np.intp)
-                ys = puntos_app[:, 1].astype(np.intp)
-                dentro = (ys < prob_humo.shape[0]) & (xs < prob_humo.shape[1])
-                conservar = np.zeros(len(puntos_app), dtype=bool)
-                conservar[dentro] = prob_humo[ys[dentro], xs[dentro]] < self.umbral_prob
-                if conservar.any():
-                    tensor_filtrado.append(puntos_app[conservar])
-
-                vivos = int(conservar.sum())
-            else:
-                vivos = 0
-                
-            total_v = len(puntos_app)
-            n_ventana += 1
+            puntos_validos = []
+            for p in puntos_app:
+                x, y = int(p[0]), int(p[1])
+                # Ya no es necesario escalar las coordenadas X e Y porque prob_humo fue restaurada a su tamaño original
+                if y < prob_humo.shape[0] and x < prob_humo.shape[1]:
+                    if prob_humo[y, x] < self.umbral_prob:  
+                        puntos_validos.append(p)
+                        
+            tensor_filtrado.extend(puntos_validos)
             
-            logger.info(
-                f"[{self.name}] ventana {n_ventana}/{ventanas} "
-                f"(frames {start_frame}-{end_frame_ctx}): "
-                f"{total_v:,} pts -> {vivos:,} ({vivos/max(total_v,1)*100:.0f}% "
-                f"conservado) | {time.time() - t_inicio:.0f}s acumulados")
-
-            # NUESTRA OPTIMIZACIÓN: Forzamos la limpieza agresiva en Docker
-            del img_intensidad, prob_humo, puntos_ctx, puntos_app
-            gc.collect()
-
-        tensor_final = (np.concatenate(tensor_filtrado) if tensor_filtrado
-                        else np.empty((0, 4)))
+        tensor_final = np.array(tensor_filtrado) if tensor_filtrado else np.empty((0, 4))
         
         retencion = (len(tensor_final) / len(tensor)) * 100 if len(tensor) > 0 else 0
-        logger.info(
-            f"[{self.name}] LISTO en {time.time() - t_inicio:.0f}s: "
-            f"{len(tensor):,} -> {len(tensor_final):,} pts "
-            f"({retencion:.1f}% conservado, {100-retencion:.1f}% descartado "
-            f"como humo)")
+        logger.info(f"[{self.name}] Filtrado completado. Se conservaron {len(tensor_final)} pts ({retencion:.1f}%).")
         
         context["tensor_raw"] = tensor_final
-        
-        del session
-        gc.collect()
-        
         return context
