@@ -21,8 +21,7 @@ class AISmokeFilterNode(PipelineNode):
         onnx_path: str = "detovision_model_v18.onnx", 
         frames_contexto: int = 60, 
         avance_frames: int = 30, 
-        umbral_prob: float = 0.90,
-        escala: float = 0.75  # <-- Integración del parámetro de escala
+        umbral_prob: float = 0.90
     ):
         super().__init__(name)
         self.onnx_path = onnx_path
