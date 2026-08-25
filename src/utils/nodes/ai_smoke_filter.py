@@ -69,12 +69,6 @@ class AISmokeFilterNode(PipelineNode):
         prob_humo_restaurada = cv2.resize(prob_humo_reducida, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
         
         return prob_humo_restaurada
-        prob_humo_reducida = probabilidades[1, :, :] # Retorna la capa de la clase 1 (Humo)
-        
-        # 5. Restaurar a resolución original
-        prob_humo_restaurada = cv2.resize(prob_humo_reducida, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
-        
-        return prob_humo_restaurada
 
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
         tensor = context.get("tensor_raw")
@@ -84,7 +78,6 @@ class AISmokeFilterNode(PipelineNode):
 
         try:
             session = ort.InferenceSession(self.onnx_path, providers=['CPUExecutionProvider'])
-            session = ort.InferenceSession(self.onnx_path, providers=['CPUExecutionProvider'])
             input_name = session.get_inputs()[0].name
         except Exception as e:
             context["error"] = f"Error al cargar el modelo ONNX en {self.onnx_path}: {e}"
@@ -92,7 +85,6 @@ class AISmokeFilterNode(PipelineNode):
 
         max_x = int(np.max(tensor[:, 0])) + 1
         max_y = int(np.max(tensor[:, 1])) + 1
-        max_t = int(np.max(tensor[:, 2])) + 1 
         max_t = int(np.max(tensor[:, 2])) + 1 
         
         tensor_filtrado = []
@@ -129,7 +121,6 @@ class AISmokeFilterNode(PipelineNode):
         tensor_final = np.array(tensor_filtrado) if tensor_filtrado else np.empty((0, 4))
         
         retencion = (len(tensor_final) / len(tensor)) * 100 if len(tensor) > 0 else 0
-        logger.info(f"[{self.name}] Filtrado completado. Se conservaron {len(tensor_final)} pts ({retencion:.1f}%).")
         logger.info(f"[{self.name}] Filtrado completado. Se conservaron {len(tensor_final)} pts ({retencion:.1f}%).")
         
         context["tensor_raw"] = tensor_final
