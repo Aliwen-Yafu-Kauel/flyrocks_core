@@ -47,13 +47,8 @@
                     <!-- NUEVA SECCIÓN: PARÁMETROS AVANZADOS -->
                     <div class="md:col-span-2 pt-4 border-t border-slate-100">
                         <h3 class="text-sm font-bold text-slate-700 mb-4"><i class="fa-solid fa-sliders text-blue-400 mr-2"></i>Parámetros del Algoritmo</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                            <div>
-                                <label class="block text-xs font-bold text-slate-600 mb-1">Percentil de Energía</label>
-                                <input type="number" id="percentile" min="0" max="100" step="0.1" value="96.0" required 
-                                    class="w-full text-sm border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-400 outline-none bg-white">
-                                <p class="text-[10px] text-slate-400 mt-1">Rango: 0 a 100</p>
-                            </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                            <!-- El percentil se eliminó de aquí porque ahora se define de manera interactiva -->
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 mb-1">Umbral Sigma</label>
                                 <input type="number" id="sigma" min="0.0" max="1.0" step="0.01" value="0.5" required 
@@ -99,6 +94,44 @@
                     <i class="fa-solid fa-file-pdf mr-2"></i> Configurar y Generar PDF
                 </button>
             </div>
+        </section>
+
+        <!-- SECCIÓN 2.5: PERCENTIL INTERACTIVO (FASE DE PAUSA) -->
+        <section id="percentile-modal-section" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-700 p-8 mb-8 text-white fade-in">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+                <div>
+                    <h2 class="text-2xl font-bold flex items-center text-blue-400">
+                        <i class="fa-solid fa-sliders mr-3"></i> Corte de Ruido por Percentil
+                    </h2>
+                    <p class="text-slate-400 text-sm mt-1">Ajuste el slider para limpiar la imagen de eventos tenues. Los cambios se reflejan en tiempo real.</p>
+                </div>
+                <span id="preview-corte-val" class="bg-blue-600/30 text-blue-400 border border-blue-500/50 px-4 py-2 rounded-xl text-sm font-bold font-mono text-center">
+                    Percentil: 0.0% | Corte >= 0.0
+                </span>
+            </div>
+
+            <!-- Canvas de Interacción (Carga la mascara_shifted.png) -->
+            <div class="relative w-full border border-slate-700 rounded-xl bg-black overflow-hidden flex justify-center items-center min-h-[400px] mb-6">
+                <div id="loading-mask" class="absolute text-white/80 animate-pulse text-center">
+                    <i class="fa-solid fa-spinner fa-spin mr-2"></i> Preparando lienzo visual...
+                </div>
+                <canvas id="percentile-canvas" class="max-w-full h-auto max-h-[60vh] object-contain cursor-crosshair relative z-10"></canvas>
+            </div>
+
+            <!-- Slider de Percentil -->
+            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 mb-6">
+                <div class="flex justify-between text-sm font-bold mb-2">
+                    <span class="text-slate-500">0.0% (Sin corte)</span>
+                    <span class="text-blue-400 text-lg">Seleccionado: <span id="slider-pct-label">0.0</span>%</span>
+                    <span class="text-slate-500">99.9% (Corte estricto)</span>
+                </div>
+                <input type="range" id="interactive-percentile-slider" min="0.0" max="99.9" step="0.1" value="0.0" 
+                    class="w-full h-4 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+            </div>
+
+            <button id="btn-confirm-percentile" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg flex justify-center items-center text-lg">
+                <i class="fa-solid fa-check-double mr-2"></i> Confirmar Percentil y Reanudar Tracking
+            </button>
         </section>
 
         <!-- Interfaz Interactiva de Trayectorias -->
@@ -226,8 +259,9 @@
         const API_BASE_URL = 'http://localhost:8000';
         let currentJobId = null;
         let ws = null;
+        let isInteractiveActive = false; // Flag para evitar llamadas repetidas al modal
 
-        // Variables de Visualización
+        // Variables de Visualización Global
         let globalTrajectories = {};
         let firstFrameImage = null;
         let idColors = {}; 
@@ -259,6 +293,17 @@
                     return; 
                 }
 
+                // DETECTAR ESTADO DE PAUSA PARA PERCENTIL INTERACTIVO
+                if (data.status === "ESPERANDO_PERCENTIL_USUARIO" && !isInteractiveActive) {
+                    isInteractiveActive = true;
+                    statusText.innerText = "Pausado: Esperando confirmación de usuario";
+                    document.getElementById('progress-bar').classList.replace('bg-blue-600', 'bg-yellow-500');
+                    
+                    ws.close(); // Cerramos WebSocket mientras el humano decide
+                    activarCorteInteractivo(jobId);
+                    return;
+                }
+
                 statusText.innerText = data.status || "Procesando...";
                 document.getElementById('progress-bar').style.width = `${data.percentage || 0}%`;
                 document.getElementById('percentage-text').innerText = Math.round(data.percentage || 0);
@@ -287,6 +332,248 @@
             };
         }
 
+        // ==========================================
+        // LÓGICA DE PERCENTIL INTERACTIVO (FASE 1.5)
+        // ==========================================
+        let puntosCrudos = []; 
+        let intensidadesOrdenadas = [];
+        let canvasInteractive = document.getElementById('percentile-canvas');
+        let ctxInteractive = canvasInteractive.getContext('2d');
+
+        async function activarCorteInteractivo(jobId) {
+            document.getElementById('progress-section').classList.add('hidden');
+            document.getElementById('percentile-modal-section').classList.remove('hidden');
+            document.getElementById('loading-mask').classList.remove('hidden');
+
+            try {
+                // 1. Cargar el vector binario (.npy) PRIMERO de forma segura
+                const resNpy = await fetch(`${API_BASE_URL}/temp_videos/${jobId}/intensidades_raw.npy`);
+                if (!resNpy.ok) throw new Error("Fallo al cargar intensidades");
+                
+                const buffer = await resNpy.arrayBuffer();
+                const view = new DataView(buffer);
+                const headerLength = view.getUint16(8, true); 
+                
+                // Cortar el buffer para evitar el error de alineación (múltiplos de 4)
+                const dataBuffer = buffer.slice(10 + headerLength);
+                
+                // Array ordenado para los cálculos reales de percentil
+                intensidadesOrdenadas = new Float32Array(dataBuffer).sort();
+
+                // 2. Cargar la imagen base para extraer coordenadas
+                const baseImage = new Image();
+                baseImage.crossOrigin = "Anonymous";
+                
+                baseImage.onload = () => {
+                    canvasInteractive.width = baseImage.naturalWidth;
+                    canvasInteractive.height = baseImage.naturalHeight;
+                    
+                    // Dibujar una vez para extraer los píxeles
+                    ctxInteractive.drawImage(baseImage, 0, 0);
+                    const imgData = ctxInteractive.getImageData(0, 0, canvasInteractive.width, canvasInteractive.height);
+                    const data = imgData.data;
+                    
+                    puntosCrudos = [];
+                    // Guardar solo píxeles activos con sus coordenadas (X, Y) y color visual
+                    for (let y = 0; y < canvasInteractive.height; y++) {
+                        for (let x = 0; x < canvasInteractive.width; x++) {
+                            const idx = (y * canvasInteractive.width + x) * 4;
+                            const val = data[idx]; // Valor R
+                            if (val > 0) {
+                                puntosCrudos.push({ x: x, y: y, color: val });
+                            }
+                        }
+                    }
+                    
+                    // Ordenar puntos visuales de menor a mayor intensidad
+                    puntosCrudos.sort((a, b) => a.color - b.color);
+                    
+                    document.getElementById('loading-mask').classList.add('hidden');
+                    renderizarMascaraConCorte(0.0);
+                };
+
+                baseImage.onerror = () => {
+                    throw new Error("No se pudo renderizar la máscara 2D.");
+                };
+                
+                // Asignar el src AL FINAL, después de definir el onload
+                baseImage.src = `${API_BASE_URL}/temp_videos/${jobId}/mascara_shifted.png`;
+
+            } catch (err) {
+                console.error("Error al cargar datos interactivos: ", err);
+                document.getElementById('loading-mask').innerHTML = `<i class="fa-solid fa-triangle-exclamation text-red-500"></i> Error: ${err.message}`;
+            }
+        }
+
+        function renderizarMascaraConCorte(pct) {
+            if (puntosCrudos.length === 0 || intensidadesOrdenadas.length === 0) return;
+
+            const totalPuntos = puntosCrudos.length;
+            
+            // 1. Calcular el valor de corte numérico real para la UI
+            const idxCorte = Math.floor((pct / 100.0) * (totalPuntos - 1));
+            const valorCorteReal = intensidadesOrdenadas[idxCorte] || 0.0;
+
+            document.getElementById('preview-corte-val').innerText = `Percentil: ${pct.toFixed(1)}% | Corte >= ${valorCorteReal.toFixed(1)}`;
+            document.getElementById('slider-pct-label').innerText = pct.toFixed(1);
+
+            // 2. Limpiar Canvas con negro SÓLIDO
+            ctxInteractive.fillStyle = "#000000";
+            ctxInteractive.fillRect(0, 0, canvasInteractive.width, canvasInteractive.height);
+
+            // 3. Preparar imagen vacía
+            const newImgData = ctxInteractive.createImageData(canvasInteractive.width, canvasInteractive.height);
+            const data = newImgData.data;
+
+            // 4. Dibujar SOLO los puntos que sobreviven al corte (hacia arriba)
+            for (let i = idxCorte; i < totalPuntos; i++) {
+                const pt = puntosCrudos[i];
+                const pixelIdx = (pt.y * canvasInteractive.width + pt.x) * 4;
+                
+                data[pixelIdx] = pt.color;     // R
+                data[pixelIdx + 1] = pt.color; // G
+                data[pixelIdx + 2] = pt.color; // B
+                data[pixelIdx + 3] = 255;      // Alpha opaco al 100%
+            }
+
+            // 5. Plasmar en el canvas
+            ctxInteractive.putImageData(newImgData, 0, 0);
+        }
+
+
+        // Listener del Slider de Percentil
+        document.getElementById('interactive-percentile-slider').addEventListener('input', (e) => {
+            renderizarMascaraConCorte(parseFloat(e.target.value));
+        });
+
+        // Evento Confirmar y Reanudar Pipeline
+        document.getElementById('btn-confirm-percentile').addEventListener('click', async () => {
+            const pctElegido = parseFloat(document.getElementById('interactive-percentile-slider').value);
+            const btn = document.getElementById('btn-confirm-percentile');
+            
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Reanudando Pipeline...';
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/resume/${currentJobId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ percentile: pctElegido })
+                });
+
+                if (!res.ok) throw new Error("Error al reanudar el pipeline");
+
+                // Ocultar modal y volver a mostrar barra de progreso
+                document.getElementById('percentile-modal-section').classList.add('hidden');
+                document.getElementById('progress-section').classList.remove('hidden');
+                document.getElementById('progress-bar').classList.replace('bg-yellow-500', 'bg-blue-600');
+                
+                // Restablecer flag
+                isInteractiveActive = false;
+                
+                // Re-conectar el WebSocket para monitorear la Fase 2
+                connectWS(currentJobId);
+            } catch (err) {
+                alert("Error: " + err.message);
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-check-double mr-2"></i> Reintentar';
+            }
+        });
+
+
+        // ==========================================
+        // CARGA INICIAL Y GENERACIÓN DE REPORTE
+        // ==========================================
+        document.getElementById('analyze-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('submit-btn');
+            const formData = new FormData();
+            
+            formData.append('video', document.getElementById('video').files[0]);
+            formData.append('origin_zone', document.getElementById('origin_zone').value);
+            formData.append('expected_projection_zone', document.getElementById('expected_zone').value);
+            formData.append('h_matrix', document.getElementById('h_matrix').value);
+            // Mandamos 0.0 temporalmente, la API lo actualizará en el endpoint resume
+            formData.append('percentile', 0.0); 
+            formData.append('sigma', document.getElementById('sigma').value);
+            formData.append('esp', document.getElementById('esp').value);
+
+            try {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Subiendo...';
+                
+                const res = await fetch(`${API_BASE_URL}/api/analyze`, { method: 'POST', body: formData });
+                
+                if (res.status === 422) {
+                    const errData = await res.json();
+                    throw new Error("Datos inválidos: " + JSON.stringify(errData.detail));
+                }
+                if (!res.ok) throw new Error("Error al conectar con la API");
+                
+                const data = await res.json();
+                
+                currentJobId = data.job_id;
+                isInteractiveActive = false; // Reset flag for a new job
+                
+                document.getElementById('job-id-display').innerText = `ID: ${currentJobId}`;
+                document.getElementById('upload-section').classList.add('hidden');
+                document.getElementById('progress-section').classList.remove('hidden');
+                document.getElementById('visualization-section').classList.add('hidden');
+                document.getElementById('percentile-modal-section').classList.add('hidden');
+                
+                document.getElementById('status-text').classList.replace('text-red-600', 'text-blue-600');
+                document.getElementById('progress-bar').classList.replace('bg-red-600', 'bg-blue-600');
+                document.getElementById('progress-bar').classList.replace('bg-yellow-500', 'bg-blue-600');
+                
+                connectWS(currentJobId);
+            } catch (err) {
+                alert('Error: ' + err.message);
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-play mr-2"></i> Reintentar';
+            }
+        });
+
+        document.getElementById('btn-open-report-form').onclick = (e) => {
+            e.preventDefault();
+            const section = document.getElementById('report-form-section');
+            section.classList.remove('hidden');
+            section.scrollIntoView({ behavior: 'smooth' });
+        };
+
+        document.getElementById('generate-report-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('btn-generate-pdf');
+            const formData = new FormData();
+            
+            formData.append('csv_file', document.getElementById('report_csv').files[0]);
+            formData.append('json_data', document.getElementById('report_json').files[0]);
+            formData.append('radio_equipos', document.getElementById('radio_equipos').value);
+            formData.append('job_id', currentJobId);
+
+            try {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Procesando PDF...';
+                
+                const res = await fetch(`${API_BASE_URL}/api/generate_report`, { method: 'POST', body: formData });
+                if (!res.ok) throw new Error("Error en el servidor al generar el reporte");
+                
+                const finalArea = document.getElementById('download-final-pdf-area');
+                finalArea.classList.remove('hidden');
+                document.getElementById('btn-download-pdf-final').href = `${API_BASE_URL}/api/report/${currentJobId}`;
+                
+                btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Reporte Generado';
+                btn.classList.replace('bg-red-600', 'bg-green-600');
+
+            } catch (err) {
+                alert(err.message);
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-gears mr-2"></i> Reintentar Generación';
+            }
+        });
+
+        // ==========================================
+        // VISUALIZACIÓN FINAL DE TRAYECTORIAS
+        // ==========================================
         async function initializeVisualization(jobId) {
             document.getElementById('visualization-section').classList.remove('hidden');
             const loadingText = document.getElementById('canvas-loading');
@@ -297,15 +584,12 @@
                 if (!res.ok) throw new Error(`Fallo en la API HTTP ${res.status}`);
                 
                 const responseData = await res.json();
-                
-                // Extracción segura del diccionario
                 globalTrajectories = responseData.json_data || responseData.data || responseData;
 
                 if (!globalTrajectories || Object.keys(globalTrajectories).length === 0) {
                      throw new Error("El JSON se descargó, pero no contiene trayectorias válidas.");
                 }
 
-                // Extraer límites para Tortuosidad y Escape
                 maxEscapeValue = 0; 
                 maxTortuosity = 1.0; 
                 idColors = {}; 
@@ -316,12 +600,10 @@
                     if (t.tortuosidad && t.tortuosidad > maxTortuosity) maxTortuosity = t.tortuosidad;
                 }
                 
-                // Configurar slider de Tortuosidad
                 const tortSlider = document.getElementById('slider-tort');
                 tortSlider.max = Math.ceil(maxTortuosity * 10) / 10 || 5.0; 
                 tortSlider.value = tortSlider.max; 
 
-                // Configurar slider de Escape Relativo
                 document.getElementById('slider-escape').value = 0; 
 
                 loadingText.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Extrayendo frame del video local...';
@@ -377,26 +659,21 @@
             
             if (!firstFrameImage) return;
 
-            // Restablecer el canvas
             canvas.width = firstFrameImage.width;
             canvas.height = firstFrameImage.height;
             ctx.drawImage(firstFrameImage, 0, 0);
 
-            // Leer valores básicos de la UI
             const filterTort = parseFloat(document.getElementById('slider-tort').value);
             const filterR2 = parseFloat(document.getElementById('slider-r2').value);
             const colorMode = document.querySelector('input[name="color-mode"]:checked').value;
 
-            // ESCALA CÚBICA para el slider de Escape
             const rawEscapeSlider = parseFloat(document.getElementById('slider-escape').value);
             const filterEscape = maxEscapeValue * Math.pow(rawEscapeSlider / 100, 3);
 
-            // Actualizar textos UI
             document.getElementById('val-tort').innerText = filterTort.toFixed(2);
             document.getElementById('val-r2').innerText = filterR2.toFixed(2);
             document.getElementById('val-escape').innerText = filterEscape.toFixed(2);
 
-            // Opacidad de la leyenda según modo
             const legend = document.getElementById('classification-legend');
             legend.style.opacity = (colorMode === 'id') ? '0.2' : '1';
 
@@ -409,7 +686,6 @@
                 const r2 = data.r2_score || 0.0; 
                 const esc = data.escape_relativo || 0.0;
 
-                // CORTES LÓGICOS
                 if (tort <= filterTort && r2 >= filterR2 && esc >= filterEscape) {
                     const pts = data.puntos; 
                     if (pts.length < 4) continue;
@@ -428,11 +704,11 @@
                         ctx.strokeStyle = idColors[trackId];
                     } else {
                         if (data.clasificacion === 'Proyección peligrosa') {
-                            ctx.strokeStyle = '#dc2626'; // Rojo
+                            ctx.strokeStyle = '#dc2626'; 
                         } else if (data.clasificacion === 'Fuera de vista') {
-                            ctx.strokeStyle = '#f97316'; // Naranja
+                            ctx.strokeStyle = '#f97316'; 
                         } else {
-                            ctx.strokeStyle = '#84cc16'; // Verde
+                            ctx.strokeStyle = '#84cc16'; 
                         }
                     }
                     
@@ -441,7 +717,6 @@
             }
         }
 
-        // Listeners para interactividad inmediata
         ['slider-tort', 'slider-r2', 'slider-escape'].forEach(id => {
             document.getElementById(id).addEventListener('input', drawTrajectories);
         });
@@ -450,98 +725,10 @@
             radio.addEventListener('change', drawTrajectories);
         });
 
-        // ==========================================
-        // EVENTOS DE LOS FORMULARIOS
-        // ==========================================
-        document.getElementById('analyze-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const btn = document.getElementById('submit-btn');
-            const formData = new FormData();
-            
-            // 🔴 AÑADIDOS LOS NUEVOS PARÁMETROS AL FORMDATA
-            formData.append('video', document.getElementById('video').files[0]);
-            formData.append('origin_zone', document.getElementById('origin_zone').value);
-            formData.append('expected_projection_zone', document.getElementById('expected_zone').value);
-            formData.append('h_matrix', document.getElementById('h_matrix').value);
-            formData.append('percentile', document.getElementById('percentile').value);
-            formData.append('sigma', document.getElementById('sigma').value);
-            formData.append('esp', document.getElementById('esp').value);
-
-            try {
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Subiendo...';
-                
-                const res = await fetch(`${API_BASE_URL}/api/analyze`, { method: 'POST', body: formData });
-                
-                // Si la API rechaza los valores (422 Validación fallida)
-                if (res.status === 422) {
-                    const errData = await res.json();
-                    throw new Error("Datos inválidos: " + JSON.stringify(errData.detail));
-                }
-                
-                if (!res.ok) throw new Error("Error al conectar con la API");
-                
-                const data = await res.json();
-                
-                currentJobId = data.job_id;
-                document.getElementById('job-id-display').innerText = `ID: ${currentJobId}`;
-                document.getElementById('upload-section').classList.add('hidden');
-                document.getElementById('progress-section').classList.remove('hidden');
-                document.getElementById('visualization-section').classList.add('hidden');
-                
-                document.getElementById('status-text').classList.replace('text-red-600', 'text-blue-600');
-                document.getElementById('progress-bar').classList.replace('bg-red-600', 'bg-blue-600');
-                
-                connectWS(currentJobId);
-            } catch (err) {
-                alert('Error: ' + err.message);
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fa-solid fa-play mr-2"></i> Reintentar';
-            }
-        });
-
-        document.getElementById('btn-open-report-form').onclick = (e) => {
-            e.preventDefault();
-            const section = document.getElementById('report-form-section');
-            section.classList.remove('hidden');
-            section.scrollIntoView({ behavior: 'smooth' });
-        };
-
-        document.getElementById('generate-report-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const btn = document.getElementById('btn-generate-pdf');
-            const formData = new FormData();
-            
-            formData.append('csv_file', document.getElementById('report_csv').files[0]);
-            formData.append('json_data', document.getElementById('report_json').files[0]);
-            formData.append('radio_equipos', document.getElementById('radio_equipos').value);
-            formData.append('job_id', currentJobId);
-
-            try {
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Procesando PDF...';
-                
-                const res = await fetch(`${API_BASE_URL}/api/generate_report`, { method: 'POST', body: formData });
-                if (!res.ok) throw new Error("Error en el servidor al generar el reporte");
-                
-                const finalArea = document.getElementById('download-final-pdf-area');
-                finalArea.classList.remove('hidden');
-                document.getElementById('btn-download-pdf-final').href = `${API_BASE_URL}/api/report/${currentJobId}`;
-                
-                btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i> Reporte Generado';
-                btn.classList.replace('bg-red-600', 'bg-green-600');
-
-            } catch (err) {
-                alert(err.message);
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fa-solid fa-gears mr-2"></i> Reintentar Generación';
-            }
-        });
-
-        // --- FUNCIONES INTERACTIVAS ---
+        // TRAYECTORIAS FILTRADO R2 ANTIGUO
         let trayectoriasGlobales = [];
-        let canvas = document.getElementById('trajectory-canvas');
-        let ctx = canvas.getContext('2d');
+        let canvasT = document.getElementById('trajectory-canvas');
+        let ctxT = canvasT.getContext('2d');
         let bgImage = document.getElementById('bg-image');
         let slider = document.getElementById('r2-slider');
         let display = document.getElementById('r2-value-display');
@@ -549,35 +736,26 @@
         async function inicializarInteractividad(jobId) {
             document.getElementById('interactive-results').classList.remove('hidden');
             
-            // 1. Obtener la data (JSON) de la API
             const res = await fetch(`${API_BASE_URL}/api/results/${jobId}`);
             const data = await res.json();
             
-            // Aquí sacamos las trayectorias de la BD
             trayectoriasGlobales = data.json_data.trayectorias || [];
-            
-            // 2. Cargar la imagen de fondo (FastAPI ahora nos deja verla)
             bgImage.src = `${API_BASE_URL}/temp_videos/background.jpg`;
             
-            // 3. Ajustar el tamaño del canvas cuando la imagen cargue
             bgImage.onload = () => {
-                canvas.width = bgImage.naturalWidth;
-                canvas.height = bgImage.naturalHeight;
-                dibujarTrayectorias();
+                canvasT.width = bgImage.naturalWidth;
+                canvasT.height = bgImage.naturalHeight;
+                dibujarTrayectoriasANTIGUO();
             };
         }
 
-        function dibujarTrayectorias() {
-            // 1. Leemos el valor lineal puro del slider (de 0 a 1)
+        function dibujarTrayectoriasANTIGUO() {
             const valorLineal = parseFloat(slider.value);
-            
-            // 2. Aplicamos la curva matemática para concentrar la resolución cerca del 1
             const umbral = 1 - Math.pow(1 - valorLineal, 3);
             
-            // Mostramos el valor calculado con 3 decimales para apreciar la precisión
             display.innerText = umbral.toFixed(5);
             
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctxT.clearRect(0, 0, canvasT.width, canvasT.height);
             let contDibujadas = 0;
 
             trayectoriasGlobales.forEach((tray, index) => {
@@ -588,40 +766,37 @@
                     
                     if (rawPts.length > 1) {
                         contDibujadas++;
-                        ctx.beginPath();
+                        ctxT.beginPath();
                         
                         const p0 = Array.isArray(rawPts[0]) ? { x: rawPts[0][0], y: rawPts[0][1] } : rawPts[0];
-                        ctx.moveTo(p0.x, p0.y);
+                        ctxT.moveTo(p0.x, p0.y);
 
                         for (let i = 1; i < rawPts.length; i++) {
                             const p = Array.isArray(rawPts[i]) ? { x: rawPts[i][0], y: rawPts[i][1] } : rawPts[i];
-                            ctx.lineTo(p.x, p.y);
+                            ctxT.lineTo(p.x, p.y);
                         }
 
-                        // Colores únicos basados en el ángulo áureo
-                        ctx.strokeStyle = `hsla(${(index * 137.5) % 360}, 85%, 55%, 0.9)`;
-                        ctx.lineWidth = Math.max(3, Math.round(canvas.width / 400)); 
-                        ctx.stroke();
+                        ctxT.strokeStyle = `hsla(${(index * 137.5) % 360}, 85%, 55%, 0.9)`;
+                        ctxT.lineWidth = Math.max(3, Math.round(canvasT.width / 400)); 
+                        ctxT.stroke();
 
-                        // Dibujar punto final (Impacto)
                         const pLast = Array.isArray(rawPts[rawPts.length - 1]) ? 
                             { x: rawPts[rawPts.length - 1][0], y: rawPts[rawPts.length - 1][1] } : rawPts[rawPts.length - 1];
 
-                        ctx.beginPath();
-                        ctx.arc(pLast.x, pLast.y, Math.max(4, Math.round(canvas.width / 300)), 0, 2 * Math.PI);
-                        ctx.fillStyle = "#FFFFFF"; 
-                        ctx.fill();
-                        ctx.lineWidth = 1;
-                        ctx.strokeStyle = "#000000";
-                        ctx.stroke();
+                        ctxT.beginPath();
+                        ctxT.arc(pLast.x, pLast.y, Math.max(4, Math.round(canvasT.width / 300)), 0, 2 * Math.PI);
+                        ctxT.fillStyle = "#FFFFFF"; 
+                        ctxT.fill();
+                        ctxT.lineWidth = 1;
+                        ctxT.strokeStyle = "#000000";
+                        ctxT.stroke();
                     }
                 }
             });
-
             console.log(`🎨 Dibujadas ${contDibujadas} trayectorias con R² >= ${umbral.toFixed(5)}`);
         }
 
-        slider.addEventListener('input', dibujarTrayectorias);
+        slider.addEventListener('input', dibujarTrayectoriasANTIGUO);
     </script>
 </body>
 </html>
