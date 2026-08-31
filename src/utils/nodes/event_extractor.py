@@ -48,6 +48,7 @@ class EventExtractorNode(PipelineNode):
             return context
 
         event_cloud_4d = []
+        frame_index = 2
         
         try:
             ret, previous_frame = cap.read()
@@ -60,7 +61,6 @@ class EventExtractorNode(PipelineNode):
             previous_gray = cv2.cvtColor(previous_frame, cv2.COLOR_BGR2GRAY)
             previous_gray = cv2.GaussianBlur(previous_gray, self.blur_kernel, 0)
             
-            frame_index = 2
             while True:
                 ret, current_frame = cap.read()
                 if not ret: break
@@ -70,28 +70,33 @@ class EventExtractorNode(PipelineNode):
                 
                 difference = cv2.absdiff(previous_gray, current_gray)
                 
-                # Guardar el valor máximo histórico
-                max_change_mask = cv2.max(max_change_mask, difference)
+                # OPTIMIZACIÓN 1: Operación In-Place. Guardamos la diferencia directamente sobre la memoria de max_change_mask.
+                cv2.max(max_change_mask, difference, dst=max_change_mask)
 
                 ys, xs = np.nonzero(difference > self.noise_threshold)
                 
                 if ys.size > 0:
                     intensities = difference[ys, xs]
+                    
+                    # OPTIMIZACIÓN 2: Early Downcasting. Convertimos int64 a uint16 antes del apilado.
+                    xs = xs.astype(np.uint16)
+                    ys = ys.astype(np.uint16)
                     ts = np.full(ys.size, frame_index, dtype=np.uint16)
+                    
+                    # Como xs, ys y ts son uint16, e intensities es uint8, el resultado será 100% uint16 (8 bytes por fila).
                     frame_events = np.column_stack((xs, ys, ts, intensities))
                     event_cloud_4d.append(frame_events)
 
                 previous_gray = current_gray
                 frame_index += 1
 
-            # --- MEJORA VISUAL: Traslación Aditiva Alpha ---
+            # --- MEJORA VISUAL: Traslación Aditiva Alpha In-Place ---
             v_max = int(np.max(max_change_mask))
-            if v_max > 0:
+            if 0 < v_max < 255:
                 alpha = 255 - v_max
-                mask_activa = max_change_mask > 0
-                max_change_mask[mask_activa] = np.clip(
-                    max_change_mask[mask_activa].astype(np.uint16) + alpha, 0, 255
-                ).astype(np.uint8)
+                # OPTIMIZACIÓN 3: Suma nativa con máscara usando C++ bajo el capó sin crear tensores intermedios
+                mask_activa = (max_change_mask > 0).astype(np.uint8)
+                cv2.add(max_change_mask, alpha, dst=max_change_mask, mask=mask_activa)
                 logger.info(f"[{self.name}] Máscara mejorada con traslación alpha={alpha}")
 
             # Guardar en disco y añadir al contexto
@@ -103,13 +108,14 @@ class EventExtractorNode(PipelineNode):
         except Exception as e:
             context["error"] = str(e)
         finally:
-            print(f"Frames totales procesados: {frame_index}")
+            logger.info(f"[{self.name}] Frames totales procesados: {frame_index}")
             cap.release()
 
         if event_cloud_4d:
+            # OPTIMIZACIÓN 4: El concatenado final ahora ensambla piezas ligeras (uint16) directamente.
             self.tensor_raw = np.concatenate(event_cloud_4d, axis=0)
             context["tensor_raw"] = self.tensor_raw
-            logger.info(f"[{self.name}] Extracted {len(self.tensor_raw):,} events successfully.")
+            logger.info(f"[{self.name}] Extracted {len(self.tensor_raw):,} events successfully (Dtype: {self.tensor_raw.dtype}).")
         else:
             context["tensor_raw"] = None
 
