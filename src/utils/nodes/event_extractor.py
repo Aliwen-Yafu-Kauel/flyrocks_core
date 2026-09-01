@@ -18,7 +18,7 @@ class EventExtractorNode(PipelineNode):
 
     def __init__(
         self, 
-        name: str = "EventExtractor4D",
+        name: str = "EventExtractor4D_Signed",
         noise_threshold: int = 8, 
         blur_kernel: Tuple[int, int] = (3, 3),
         fallback_video_path: Optional[str | Path] = None,
@@ -54,36 +54,42 @@ class EventExtractorNode(PipelineNode):
             ret, previous_frame = cap.read()
             if not ret: return context
 
-            # Inicializar la máscara de acumulación
+            # Inicializar la máscara de acumulación para la UI (absoluta)
             height, width = previous_frame.shape[:2]
             max_change_mask = np.zeros((height, width), dtype=np.uint8)
 
+            # LÓGICA DE LABORATORIO: Convertimos a int16 desde el inicio para permitir restas con signo
             previous_gray = cv2.cvtColor(previous_frame, cv2.COLOR_BGR2GRAY)
-            previous_gray = cv2.GaussianBlur(previous_gray, self.blur_kernel, 0)
+            previous_gray = cv2.GaussianBlur(previous_gray, self.blur_kernel, 0).astype(np.int16)
             
             while True:
                 ret, current_frame = cap.read()
                 if not ret: break
 
                 current_gray = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
-                current_gray = cv2.GaussianBlur(current_gray, self.blur_kernel, 0)
+                current_gray = cv2.GaussianBlur(current_gray, self.blur_kernel, 0).astype(np.int16)
                 
-                difference = cv2.absdiff(previous_gray, current_gray)
+                # Diferencia exacta (Actual - Anterior) para conservar el SIGNO (+/-)
+                difference = current_gray - previous_gray
                 
-                # OPTIMIZACIÓN 1: Operación In-Place. Guardamos la diferencia directamente sobre la memoria de max_change_mask.
-                cv2.max(max_change_mask, difference, dst=max_change_mask)
+                # Matriz de magnitudes absolutas para filtrar ruido y generar la máscara visual
+                abs_diff = np.abs(difference)
+                
+                # Guardamos la magnitud directamente sobre la memoria de la máscara (requiere uint8)
+                cv2.max(max_change_mask, abs_diff.astype(np.uint8), dst=max_change_mask)
 
-                ys, xs = np.nonzero(difference > self.noise_threshold)
+                ys, xs = np.nonzero(abs_diff > self.noise_threshold)
                 
                 if ys.size > 0:
+                    # Extraemos la intensidad CON SIGNO de la matriz difference, no del abs_diff
                     intensities = difference[ys, xs]
                     
-                    # OPTIMIZACIÓN 2: Early Downcasting. Convertimos int64 a uint16 antes del apilado.
-                    xs = xs.astype(np.uint16)
-                    ys = ys.astype(np.uint16)
-                    ts = np.full(ys.size, frame_index, dtype=np.uint16)
+                    # OPTIMIZACIÓN DE RAM: Convertimos a int16 (con signo).
+                    # Soporta coordenadas hasta 32K y mantiene los negativos fotométricos intactos.
+                    xs = xs.astype(np.int16)
+                    ys = ys.astype(np.int16)
+                    ts = np.full(ys.size, frame_index, dtype=np.int16)
                     
-                    # Como xs, ys y ts son uint16, e intensities es uint8, el resultado será 100% uint16 (8 bytes por fila).
                     frame_events = np.column_stack((xs, ys, ts, intensities))
                     event_cloud_4d.append(frame_events)
 
@@ -94,12 +100,11 @@ class EventExtractorNode(PipelineNode):
             v_max = int(np.max(max_change_mask))
             if 0 < v_max < 255:
                 alpha = 255 - v_max
-                # OPTIMIZACIÓN 3: Suma nativa con máscara usando C++ bajo el capó sin crear tensores intermedios
                 mask_activa = (max_change_mask > 0).astype(np.uint8)
                 cv2.add(max_change_mask, alpha, dst=max_change_mask, mask=mask_activa)
                 logger.info(f"[{self.name}] Máscara mejorada con traslación alpha={alpha}")
 
-            # Guardar en disco y añadir al contexto
+            # Guardar máscara en disco
             mask_path = video_path.parent / self.output_mask_filename
             cv2.imwrite(str(mask_path), max_change_mask)
             context["change_mask_path"] = str(mask_path)
@@ -112,10 +117,10 @@ class EventExtractorNode(PipelineNode):
             cap.release()
 
         if event_cloud_4d:
-            # OPTIMIZACIÓN 4: El concatenado final ahora ensambla piezas ligeras (uint16) directamente.
+            # Concatenado final ensamblando bloques int16 nativos
             self.tensor_raw = np.concatenate(event_cloud_4d, axis=0)
             context["tensor_raw"] = self.tensor_raw
-            logger.info(f"[{self.name}] Extracted {len(self.tensor_raw):,} events successfully (Dtype: {self.tensor_raw.dtype}).")
+            logger.info(f"[{self.name}] Extracted {len(self.tensor_raw):,} SIGNED events successfully (Dtype: {self.tensor_raw.dtype}).")
         else:
             context["tensor_raw"] = None
 

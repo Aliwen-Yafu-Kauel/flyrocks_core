@@ -217,10 +217,11 @@ class EnergyPercentileFilterNode(PipelineNode):
 
 class DBSCANClusteringNode(PipelineNode):
     """Groups pixel events into spatial centroids per frame using X, Y, and Light."""
-    def __init__(self, name: str = "DBSCAN_Clustering", eps: float = 5.0, min_samples: int = 1, peso_luz: float = 0.1):
+    def __init__(self, name: str = "DBSCAN_Clustering", eps: float = 5.0, min_samples: int = 1, max_samples: int = 50, peso_luz: float = 0.1):
         super().__init__(name)
         self.eps = eps
         self.min_samples = min_samples
+        self.max_samples = max_samples
         self.peso_luz = peso_luz
 
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -232,7 +233,6 @@ class DBSCANClusteringNode(PipelineNode):
         detections_by_frame = {}
         
         for t in frames_unique:
-            # Extract [X, Y, Intensity]
             points = tensor[tensor[:, 2] == t][:, [0, 1, 3]]
             detections = []
             if len(points) > 0:
@@ -242,8 +242,11 @@ class DBSCANClusteringNode(PipelineNode):
                 clustering = DBSCAN(eps=self.eps, min_samples=self.min_samples).fit(points_w)
                 for label in np.unique(clustering.labels_):
                     if label == -1: continue
-                    centroid = np.mean(points[clustering.labels_ == label], axis=0)
-                    detections.append(centroid)
+                    mask = clustering.labels_ == label
+                    # CORRECCIÓN: Bloquear clústeres masivos (humo)
+                    if np.sum(mask) <= self.max_samples:
+                        centroid = np.mean(points[mask], axis=0)
+                        detections.append(centroid)
                     
             detections_by_frame[t] = np.array(detections)
             
@@ -252,7 +255,6 @@ class DBSCANClusteringNode(PipelineNode):
         context["unique_frames"] = frames_unique
         context["detections_by_frame"] = detections_by_frame
         return context
-
 
 class GridSearchNode(PipelineNode):
     """Runs a Multiprocessing Grid Search to find the optimal 'max_lost_frames'."""
@@ -323,6 +325,55 @@ class KalmanTrackerNode(PipelineNode):
 
 
 class TrajectoryCleanerNode(PipelineNode):
+    """Filters out noise, trims ghost frames, and formats output for export."""
+    def __init__(self, name: str = "TrajectoryCleaner"):
+        super().__init__(name)
+
+    def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        raw_trajs = context.get("raw_trajectories")
+        if raw_trajs is None:
+            return context
+
+        valid_count, mean_dist, valid_trajs = evaluate_trajectories(raw_trajs)
+        logger.info(f"[{self.name}] Quality Check: {valid_count} valid trajectories (Mean Dist: {mean_dist:.2f} px).")
+
+        export_data = []
+        clean_id = 0 
+        
+        for tr in valid_trajs:
+            history = np.array(tr.history)
+            
+            # CORRECCIÓN: Extraer estrictamente las filas donde 'is_real' es True
+            reales = history[history[:, 4] == 1.0]
+            
+            if len(reales) < 3: # Must have at least 3 real observations
+                continue
+                
+            ids = np.full((len(reales), 1), clean_id)
+            final_trace = np.column_stack((ids, reales[:, :4]))
+            
+            # Ensure chronological order (since we track backwards)
+            final_trace = final_trace[final_trace[:, 3].argsort()]
+            
+            export_data.append(final_trace)
+            clean_id += 1
+            
+        if export_data:
+            final_tensor = np.vstack(export_data)
+            context["final_trajectories"] = final_tensor
+            logger.info(f"[{self.name}] Created final tensor. Total exported objects: {clean_id}")
+        else:
+            context["final_trajectories"] = None
+            logger.warning(f"[{self.name}] No trajectories survived cleaning.")
+
+        return context
+
+    def save_to_disk(self, tensor: np.ndarray, output_path: str | Path):
+        """Utility method to persist the cleaned trajectories."""
+        out_path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(out_path, tensor)
+        logger.info(f"Saved final trajectories to: {out_path}")
     """Filters out noise, trims ghost frames, and formats output for export."""
     def __init__(self, name: str = "TrajectoryCleaner"):
         super().__init__(name)
