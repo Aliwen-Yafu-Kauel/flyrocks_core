@@ -195,7 +195,7 @@ def _parallel_worker(args):
 # ===============================
 
 class EnergyPercentileFilterNode(PipelineNode):
-    """Filters the raw 4D tensor keeping only the highest energy events."""
+    """Filters the raw 4D tensor keeping only the highest energy events based on 2D collapse."""
     def __init__(self, name: str = "EnergyFilter", percentile: float = 96.0):
         super().__init__(name)
         self.percentile = percentile
@@ -206,15 +206,33 @@ class EnergyPercentileFilterNode(PipelineNode):
             context["error"] = f"[{self.name}] No input tensor found in context."
             return context
 
-        threshold = np.percentile(np.abs(tensor[:, 3]), self.percentile)
+        # 1. Colapso Espacial 2D (Paridad estricta con el Frontend y Laboratorio)
+        max_x = int(np.max(tensor[:, 0])) + 1
+        max_y = int(np.max(tensor[:, 1])) + 1
+        canvas_raw = np.zeros((max_y, max_x), dtype=np.float32)
+        
+        intensidades_abs = np.abs(tensor[:, 3])
+        np.maximum.at(canvas_raw, (tensor[:, 1].astype(int), tensor[:, 0].astype(int)), intensidades_abs)
+        
+        # 2. Extraer los máximos espaciales válidos para la estadística
+        intensidades_validas = canvas_raw[canvas_raw > 0]
+        
+        if len(intensidades_validas) == 0:
+            context["tensor_raw"] = np.empty((0, 4), dtype=tensor.dtype)
+            return context
+
+        # 3. Calcular el umbral estadístico sobre la muestra 2D (Dará el valor real, ej. 32.0)
+        threshold = np.percentile(intensidades_validas, self.percentile)
+        
+        # 4. Aplicar el corte definitivo al tensor 4D original conservando sus signos
         filtered_tensor = tensor[np.abs(tensor[:, 3]) >= threshold].copy()
         
+        logger.info(f"[{self.name}] Umbral {self.percentile}% calculado sobre lienzo 2D: >= {threshold:.1f}")
         logger.info(f"[{self.name}] Filtered tensor (>{self.percentile}th pct): {len(tensor)} -> {len(filtered_tensor)} events.")
         
         context["tensor_raw"] = filtered_tensor
         return context
-
-
+    
 class DBSCANClusteringNode(PipelineNode):
     """Groups pixel events into spatial centroids per frame using X, Y, and Light."""
     def __init__(self, name: str = "DBSCAN_Clustering", eps: float = 5.0, min_samples: int = 1, max_samples: int = 50, peso_luz: float = 0.1):
